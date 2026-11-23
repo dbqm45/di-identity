@@ -1,8 +1,8 @@
 {
   "name": "di-identity",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
-  "description": "DI Identity: the suite identity service on Keycloak (organizations, people, product roles, agents) \u2014 ADR 17 in dbqm45/pdi",
+  "description": "DI Identity: the suite identity service on Keycloak (organizations, people, product roles, agents) — ADR 17 in dbqm45/pdi",
   "type": "module",
   "engines": {
     "node": ">=22.18"
