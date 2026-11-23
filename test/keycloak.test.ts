@@ -10,6 +10,7 @@ import { peopleRoutes } from '../src/people-api.ts';
 import { createAgent, createOrganization, disableOrganizationAgents, listAgents, setAgentEnabled } from '../src/keycloak/agents.ts';
 import { configure, loadSuite } from '../src/keycloak/configure.ts';
 import { addMember, grantRole, lookupByEmail, revokeRole } from '../src/keycloak/people.ts';
+import { clientSecrets, secretVariable } from '../src/keycloak/secrets.ts';
 
 // Against a real Keycloak 26 when KEYCLOAK_URL is set (CI starts one; locally: docker run, see README.md).
 const url = process.env.KEYCLOAK_URL;
@@ -130,10 +131,10 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
   });
 
   await t.test('DI Channels finds the person by verified e-mail through the di-identity API', async () => {
-    const secretOf = async (clientId: string) => {
-      const [c] = await admin.call<{ id: string }[]>('GET', `${R}/clients?clientId=${clientId}`);
-      return (await admin.call<{ value: string }>('GET', `${R}/clients/${c!.id}/client-secret`)).value;
-    };
+    // The secrets as `npm run identity -- secrets` writes them: one per product client.
+    const secrets = await clientSecrets(admin, suite);
+    assert.equal(secrets.size, suite.clients.length);
+    const secretOf = async (clientId: string) => secrets.get(secretVariable(clientId))!;
     // di-identity reads users with its own service account (view-users, query-users from configure).
     const service = keycloakServiceAdmin({ url: url!, realm: suite.realm, clientId: 'di-identity', clientSecret: await secretOf('di-identity') });
     const found = await lookupByEmail(service, suite.realm, `ola@${run}.test`);

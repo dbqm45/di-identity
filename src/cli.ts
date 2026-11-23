@@ -3,6 +3,7 @@
  * internal address; the admin API is not public.
  *
  *   npm run identity -- configure
+ *   npm run identity -- secrets --env-file <path>                 # client secrets into an env file (never printed)
  *   npm run identity -- org create <alias> "<name>" [<domain>]
  *   npm run identity -- org add-member <alias> <e-mail | user name | sub>
  *   npm run identity -- role grant <client>:<role> <e-mail | user name | sub>      # e.g. di-release-control:admin
@@ -20,6 +21,7 @@ import { keycloakAdmin } from './keycloak/admin.ts';
 import { createAgent, createOrganization, disableOrganizationAgents, listAgents, setAgentEnabled } from './keycloak/agents.ts';
 import { configure, loadSuite } from './keycloak/configure.ts';
 import { addMember, grantRole, revokeRole } from './keycloak/people.ts';
+import { clientSecrets, writeEnvFile } from './keycloak/secrets.ts';
 
 const need = (name: string): string => {
   const v = process.env[name]?.trim();
@@ -54,6 +56,14 @@ async function main(argv: string[]): Promise<void> {
 
   if (area === 'configure') {
     await configure(admin, suite, process.env, (line) => console.log(`✓ ${line}`));
+    return;
+  }
+  if (area === 'secrets') {
+    const file = options(argv.slice(1)).flags.get('env-file')?.[0];
+    if (!file) throw new Error('usage: secrets --env-file <path>');
+    const secrets = await clientSecrets(admin, suite);
+    writeEnvFile(file, secrets);
+    console.log(`✓ ${secrets.size} client secrets written to ${file} (${[...secrets.keys()].join(', ')})`);
     return;
   }
   if (area === 'org' && action === 'create') {
