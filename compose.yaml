@@ -1,0 +1,84 @@
+# One host (Hetzner Cloud VM, DA4a): Keycloak (the suite realm), the di-identity service, one Postgres with a database
+# for each, and Caddy for TLS. Secrets come from .env next to this file (never committed).
+# Start: docker compose up -d --build; then once: docker compose run --rm admin configure (README.md, "Wdrożenie").
+services:
+  keycloak:
+    image: keycloak/keycloak:26.4
+    command: start
+    restart: unless-stopped
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD in .env}
+      KC_HOSTNAME: https://${SERVICE_DOMAIN:?set SERVICE_DOMAIN in .env}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      # Temporary administrator for the first sign-in; replace it with a permanent one (README.md).
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:?set KEYCLOAK_ADMIN_USERNAME in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+      DATABASE_URL: postgres://identity:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/identity
+      DATABASE_SSL: "false"
+      OIDC_ISSUER: https://${SERVICE_DOMAIN}/realms/suite
+      OIDC_AUDIENCE: di-identity
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Administration commands (src/cli.ts) against Keycloak's internal address; not a running service.
+  admin:
+    build: .
+    profiles: [admin]
+    env_file: .env
+    environment:
+      KEYCLOAK_URL: http://keycloak:8080
+    entrypoint: ["node", "src/cli.ts"]
+    volumes:
+      - ./agent-keys:/app/agent-keys:ro
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: identity
+      POSTGRES_DB: identity
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set KEYCLOAK_DB_PASSWORD in .env}
+    volumes:
+      - db:/var/lib/postgresql/data
+      - ./deploy/init-keycloak-db.sh:/docker-entrypoint-initdb.d/10-keycloak.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U identity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SERVICE_DOMAIN: ${SERVICE_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    depends_on:
+      - keycloak
+      - app
+
+volumes:
+  db:
+  caddy:

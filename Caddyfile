@@ -1,0 +1,17 @@
+# TLS certificate from Let's Encrypt for SERVICE_DOMAIN. Public: the suite realm (sign-in, tokens, keys) and the
+# di-identity API. Not public: the Keycloak admin console and admin API, and the master realm; administer through the
+# internal address (docker compose run --rm admin …) or an SSH tunnel.
+{$SERVICE_DOMAIN} {
+	@blocked path /admin /admin/* /realms/master /realms/master/*
+	respond @blocked 404
+
+	handle /api/* {
+		reverse_proxy app:3000
+	}
+	handle /health {
+		reverse_proxy app:3000
+	}
+	handle {
+		reverse_proxy keycloak:8080
+	}
+}
