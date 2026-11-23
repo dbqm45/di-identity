@@ -2,6 +2,12 @@
 
 Notable changes, newest first. Entries are written by `npm run release` from Conventional Commits (RELEASING.md).
 
+## [0.1.2] - 2026-11-23
+
+### Added
+
+- let suite apps find a person by verified e-mail (#3)
+
 ## [0.1.1] - 2026-11-23
 
 ### Added
