@@ -70,6 +70,21 @@ KEYCLOAK_URL=http://localhost:8080 KEYCLOAK_ADMIN_USERNAME=admin KEYCLOAK_ADMIN_
 KEYCLOAK_URL=http://localhost:8080 npm test        # z testem na prawdziwym Keycloak (test/keycloak.test.ts)
 ```
 
+Usługa lokalnie, obok innych aplikacji suity (porty: Flags API 3000, di-channels 3100, DI Definition 4317; Keycloak
+na 8180, bo 8080 bywa zajęty):
+
+```sh
+docker run -d --name di-identity-db -e POSTGRES_USER=identity -e POSTGRES_PASSWORD=identity \
+  -e POSTGRES_DB=identity -p 127.0.0.1:5433:5432 postgres:17
+# .env: PORT=3200, DATABASE_URL=postgres://identity:identity@localhost:5433/identity, DATABASE_SSL=false,
+#       OIDC_ISSUER=http://localhost:8180/realms/suite, KEYCLOAK_URL=http://localhost:8180, DI_IDENTITY_CLIENT_SECRET
+npm start                       # bez ostrzeżenia „people lookup is off”
+curl http://127.0.0.1:3200/health
+```
+
+Adres `127.0.0.1` zamiast `localhost`: na macOS `localhost` trafia najpierw w IPv6 (`::1`), a usługa słucha tylko na
+`127.0.0.1`. Inna aplikacja słuchająca na tym samym porcie pod `::1` odpowie wtedy zamiast niej.
+
 Test na Keycloak tworzy własną organizację, osobę z hasłem i publicznego klienta testowego: tylko w teście, realm
 `suite` nie ma logowania hasłem.
 
