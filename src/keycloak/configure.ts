@@ -8,7 +8,8 @@ import { AdminError, type Admin } from './admin.ts';
  *
  * - realm `suite` with Organizations on, no self-registration, no password login for people (DI1: no own password
  *   database), brute-force protection, person tokens of `personTokenSeconds`;
- * - client scope `suite-identity`: claims `organization` (list of aliases), `kind` and `owner` (agents, DI4);
+ * - client scope `suite-identity`: claims `organization` (list of aliases), `kind` and `owner` (agents, DI4), and the
+ *   product roles also in the ID token (`resource_access.<client>.roles`);
  * - one confidential client per product, with its roles and an audience mapper; scope `email` only for clients with
  *   `email: true` (DI3), also removed from the realm defaults so a new client never gets it by accident;
  * - Google as identity provider when its client id and secret are in the environment (DI2).
@@ -53,6 +54,18 @@ const SCOPE_MAPPERS = [
     'access.token.claim': 'true',
     'id.token.claim': 'true',
     'introspection.token.claim': 'true',
+  }),
+  // Product roles also in the ID token: applications that read roles from it (DI Release Control reads
+  // `resource_access.di-release-control.roles` from the ID token) need them there; the built-in `roles` scope puts
+  // them only in the access token (checked on Keycloak 26.4).
+  mapper('product roles in ID token', 'oidc-usermodel-client-role-mapper', {
+    'claim.name': 'resource_access.${client_id}.roles',
+    multivalued: 'true',
+    'jsonType.label': 'String',
+    'id.token.claim': 'true',
+    'access.token.claim': 'false',
+    'introspection.token.claim': 'false',
+    'userinfo.token.claim': 'false',
   }),
   mapper('kind', 'oidc-usermodel-attribute-mapper', { 'user.attribute': 'kind', 'claim.name': 'kind', 'jsonType.label': 'String', 'access.token.claim': 'true', 'introspection.token.claim': 'true' }),
   mapper('owner', 'oidc-usermodel-attribute-mapper', { 'user.attribute': 'owner', 'claim.name': 'owner', 'jsonType.label': 'String', 'access.token.claim': 'true', 'introspection.token.claim': 'true' }),

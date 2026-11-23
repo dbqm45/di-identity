@@ -81,6 +81,10 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     assert.deepEqual(id.organizations, [run]);
     assert.deepEqual(id.roles, ['editor']);
     assert.equal(id.email, undefined);
+    // Product roles also in the ID token, for apps that read roles from it (DI Release Control).
+    const idClaims = JSON.parse(Buffer.from(String(res.body.id_token).split('.')[1] ?? '', 'base64url').toString()) as Record<string, unknown>;
+    assert.deepEqual((idClaims.resource_access as Record<string, { roles: string[] }>)['di-release']?.roles, ['editor']);
+    assert.deepEqual(idClaims.organization, [run]);
     // Without being an authorized party, the same token is refused by di-release.
     const strict = createVerifier({ issuer, audience: 'di-release', fetchJwks: discoveryJwks(issuer) });
     await assert.rejects(strict.verify(String(res.body.access_token)), /issued to another application/);

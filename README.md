@@ -25,7 +25,7 @@ produktów jako role klientów i agenci jako osobne podmioty z właścicielem (D
 | `sub` | identyfikator osoby w suicie | identyfikator agenta (konto usługowe) |
 | `azp` | klient aplikacji, której wydano token | `agent-<persona>-<organizacja>` |
 | `organization` | lista aliasów organizacji, np. `["acme"]` | tak samo |
-| `resource_access.<aplikacja>.roles` | role w danej aplikacji | role nadane agentowi |
+| `resource_access.<aplikacja>.roles` | role w danej aplikacji; w tokenie dostępu i w ID tokenie (dla aplikacji, które czytają role z ID tokenu, np. DI Release Control) | role nadane agentowi |
 | `kind`, `owner` | brak | `agent` i `sub` właściciela |
 | `email` | tylko dla aplikacji z `email: true` (DI3) | nigdy (szablon go pomija) |
 
