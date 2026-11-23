@@ -1,0 +1,32 @@
+{
+  "name": "di-identity",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DI Identity: the suite identity service on Keycloak (organizations, people, product roles, agents) \u2014 ADR 17 in dbqm45/pdi",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.ts",
+    "migrate": "node --env-file-if-exists=.env src/db/migrate-cli.ts",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "lint:commit": "node scripts/check-commit-message.ts",
+    "release": "node scripts/release.ts",
+    "contract:sync": "node tools/sync-contract.ts sync",
+    "contract:check": "node tools/sync-contract.ts check",
+    "hooks:install": "git config core.hooksPath .githooks",
+    "identity": "node --env-file-if-exists=.env src/cli.ts",
+    "test:keycloak": "node --test test/keycloak.test.ts"
+  },
+  "dependencies": {
+    "fastify": "^5.12.8",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/pg": "^8.15.5",
+    "typescript": "^5.9.3"
+  }
+}
