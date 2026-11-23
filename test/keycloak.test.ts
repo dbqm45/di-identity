@@ -5,6 +5,7 @@ import { createVerifier, discoveryJwks } from '../src/auth/oidc.ts';
 import { keycloakAdmin } from '../src/keycloak/admin.ts';
 import { createAgent, createOrganization, disableOrganizationAgents, listAgents, setAgentEnabled } from '../src/keycloak/agents.ts';
 import { configure, loadSuite } from '../src/keycloak/configure.ts';
+import { addMember, grantRole, revokeRole } from '../src/keycloak/people.ts';
 
 // Against a real Keycloak 26 when KEYCLOAK_URL is set (CI starts one; locally: docker run, see README.md).
 const url = process.env.KEYCLOAK_URL;
@@ -57,12 +58,15 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     emailVerified: true,
     credentials: [{ type: 'password', value: 'test-only', temporary: false }],
   });
-  // `exact=true` matches the name, not the alias (Keycloak 26.4), so filter by alias.
-  const org = (await admin.call<{ id: string; alias: string }[]>('GET', `${R}/organizations?search=${run}`)).find((o) => o.alias === run);
-  await admin.call('POST', `${R}/organizations/${org!.id}/members`, person);
-  const [release] = await admin.call<{ id: string }[]>('GET', `${R}/clients?clientId=di-release`);
-  const editor = await admin.call('GET', `${R}/clients/${release!.id}/roles/editor`);
-  await admin.call('POST', `${R}/users/${person}/role-mappings/clients/${release!.id}`, [editor]);
+  await t.test('people commands: add to an organization by e-mail, grant and revoke a product role', async () => {
+    assert.equal(await addMember(admin, { realm: suite.realm, organization: run, who: `ola@${run}.test` }), true);
+    assert.equal(await addMember(admin, { realm: suite.realm, organization: run, who: `ola-${run}` }), false);
+    await grantRole(admin, { realm: suite.realm, who: person, role: 'di-release:editor' });
+    await grantRole(admin, { realm: suite.realm, who: person, role: 'di-release:viewer' });
+    await revokeRole(admin, { realm: suite.realm, who: person, role: 'di-release:viewer' });
+    await assert.rejects(grantRole(admin, { realm: suite.realm, who: person, role: 'di-release:owner' }), /HTTP 404/);
+    await assert.rejects(grantRole(admin, { realm: suite.realm, who: 'nobody@nowhere.test', role: 'di-release:viewer' }), /no single person/);
+  });
   const login = `test-login-${run}`;
   await admin.create(`${R}/clients`, { clientId: login, publicClient: true, directAccessGrantsEnabled: true, standardFlowEnabled: false });
 
@@ -115,6 +119,11 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     const form = { grant_type: 'client_credentials', client_id: agent.clientId, client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer', client_assertion: assertion };
     assert.equal((await tokenRequest(form)).status, 200);
     assert.equal((await tokenRequest(form)).status, 400);
+  });
+
+  await t.test('people commands refuse agents', async () => {
+    await assert.rejects(grantRole(admin, { realm: suite.realm, who: agent.sub, role: 'di-release:editor' }), /is an agent/);
+    await assert.rejects(addMember(admin, { realm: suite.realm, organization: run, who: `service-account-${agent.clientId}` }), /is an agent/);
   });
 
   await t.test('turning an agent off stops new tokens; the organization switch turns all off (AN6)', async () => {

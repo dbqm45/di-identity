@@ -42,7 +42,7 @@ const SLUG = /^[a-z][a-z0-9-]{0,40}$/;
 export const agentClientId = (persona: string, organization: string) => `agent-${persona}-${organization}`;
 
 // `exact=true` would match the name, not the alias (Keycloak 26.4), so the search is filtered by alias here.
-async function organizationByAlias(admin: Admin, realm: string, alias: string): Promise<Named> {
+export async function organizationByAlias(admin: Admin, realm: string, alias: string): Promise<Named> {
   const found = await admin.call<Named[]>('GET', `/${realm}/organizations?search=${encodeURIComponent(alias)}`);
   const org = found.find((o) => o.alias === alias);
   if (!org) throw new Error(`organization ${alias} does not exist`);
