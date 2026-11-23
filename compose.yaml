@@ -32,6 +32,9 @@ services:
       DATABASE_SSL: "false"
       OIDC_ISSUER: https://${SERVICE_DOMAIN}/realms/suite
       OIDC_AUDIENCE: di-identity
+      OIDC_SERVICE_CLIENTS: di-channels
+      # People lookup for other suite apps, with the di-identity service account (README.md, "API").
+      KEYCLOAK_URL: http://keycloak:8080
     depends_on:
       db:
         condition: service_healthy

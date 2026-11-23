@@ -2,10 +2,14 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, randomUUID, sign, type KeyObject } from 'node:crypto';
 import { test } from 'node:test';
 import { createVerifier, discoveryJwks } from '../src/auth/oidc.ts';
-import { keycloakAdmin } from '../src/keycloak/admin.ts';
+import { buildApp } from '../src/app.ts';
+import { keycloakAdmin, keycloakServiceAdmin } from '../src/keycloak/admin.ts';
+import { memoryEventStore } from '../src/events/store.ts';
+import { loadVocabulary } from '../src/events/envelope.ts';
+import { peopleRoutes } from '../src/people-api.ts';
 import { createAgent, createOrganization, disableOrganizationAgents, listAgents, setAgentEnabled } from '../src/keycloak/agents.ts';
 import { configure, loadSuite } from '../src/keycloak/configure.ts';
-import { addMember, grantRole, revokeRole } from '../src/keycloak/people.ts';
+import { addMember, grantRole, lookupByEmail, revokeRole } from '../src/keycloak/people.ts';
 
 // Against a real Keycloak 26 when KEYCLOAK_URL is set (CI starts one; locally: docker run, see README.md).
 const url = process.env.KEYCLOAK_URL;
@@ -123,6 +127,41 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     const form = { grant_type: 'client_credentials', client_id: agent.clientId, client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer', client_assertion: assertion };
     assert.equal((await tokenRequest(form)).status, 200);
     assert.equal((await tokenRequest(form)).status, 400);
+  });
+
+  await t.test('DI Channels finds the person by verified e-mail through the di-identity API', async () => {
+    const secretOf = async (clientId: string) => {
+      const [c] = await admin.call<{ id: string }[]>('GET', `${R}/clients?clientId=${clientId}`);
+      return (await admin.call<{ value: string }>('GET', `${R}/clients/${c!.id}/client-secret`)).value;
+    };
+    // di-identity reads users with its own service account (view-users, query-users from configure).
+    const service = keycloakServiceAdmin({ url: url!, realm: suite.realm, clientId: 'di-identity', clientSecret: await secretOf('di-identity') });
+    const found = await lookupByEmail(service, suite.realm, `ola@${run}.test`);
+    assert.deepEqual(found, { sub: person, name: 'Ola Nowak', organizations: [run] });
+    assert.equal(await lookupByEmail(service, suite.realm, `nobody@${run}.test`), null);
+    const unverified = await admin.create(`${R}/users`, { username: `nv-${run}`, email: `nv@${run}.test`, enabled: true, emailVerified: false });
+    assert.ok(unverified);
+    assert.equal(await lookupByEmail(service, suite.realm, `nv@${run}.test`), null);
+
+    // DI Channels calls the API with its own service token (client credentials, role di-identity:people-reader).
+    const channels = await tokenRequest({ grant_type: 'client_credentials', client_id: 'di-channels', client_secret: await secretOf('di-channels') });
+    assert.equal(channels.status, 200);
+    const verifier = createVerifier({ issuer, audience: 'di-identity', serviceClients: ['di-channels'], fetchJwks: discoveryJwks(issuer) });
+    const id = await verifier.verify(String(channels.body.access_token));
+    assert.equal(id.kind, 'service');
+    assert.deepEqual(id.roles, ['people-reader']);
+    const app = buildApp({ version: 't', verifier, eventsSecret: 'x'.repeat(32), vocabulary: loadVocabulary(), events: memoryEventStore(), checkDatabase: async () => {} });
+    peopleRoutes(app, { verifier, lookup: (email) => lookupByEmail(service, suite.realm, email) });
+    const ok = await app.inject({ url: `/api/people?email=ola@${run}.test`, headers: { authorization: `Bearer ${channels.body.access_token}` } });
+    assert.equal(ok.statusCode, 200);
+    assert.deepEqual(ok.json(), { sub: person, name: 'Ola Nowak', organizations: [run] });
+    assert.equal((await app.inject({ url: `/api/people?email=nobody@${run}.test`, headers: { authorization: `Bearer ${channels.body.access_token}` } })).statusCode, 404);
+    // A person's token, even an admin's, cannot use it.
+    const asPerson = await tokenRequest({ grant_type: 'password', client_id: login, username: `ola-${run}`, password: 'test-only', scope: 'openid' });
+    const strictPeople = createVerifier({ issuer, audience: 'di-identity', authorizedParties: [login], serviceClients: ['di-channels'], fetchJwks: discoveryJwks(issuer) });
+    const app2 = buildApp({ version: 't', verifier: strictPeople, eventsSecret: 'x'.repeat(32), vocabulary: loadVocabulary(), events: memoryEventStore(), checkDatabase: async () => {} });
+    peopleRoutes(app2, { verifier: strictPeople, lookup: (email) => lookupByEmail(service, suite.realm, email) });
+    assert.notEqual((await app2.inject({ url: `/api/people?email=ola@${run}.test`, headers: { authorization: `Bearer ${asPerson.body.access_token}` } })).statusCode, 200);
   });
 
   await t.test('people commands refuse agents', async () => {
