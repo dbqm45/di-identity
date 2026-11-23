@@ -32,6 +32,14 @@ produktów jako role klientów i agenci jako osobne podmioty z właścicielem (D
 Keycloak dopisuje do `aud` każdą aplikację, w której podmiot ma role. Dlatego szablon przyjmuje token osoby tylko
 wtedy, gdy `azp` wskazuje tę aplikację (albo klienta z `OIDC_AUTHORIZED_PARTIES`).
 
+## API dla innych aplikacji suity
+
+`GET /api/people?email=<adres>` zwraca osobę z suity z tym zweryfikowanym adresem e-mail: `{ sub, name, organizations }`
+(404, gdy nie ma dokładnie jednej takiej osoby; agentów nigdy). Tylko dla tokenu konta usługowego aplikacji z listy
+`OIDC_SERVICE_CLIENTS` z rolą `di-identity:people-reader` (na start DI Channels: osoba ze Slacka → osoba w suicie).
+Usługa czyta użytkowników kontem usługowym klienta `di-identity` z rolami `view-users` i `query-users`; nadaje je
+`configure` (`serviceRoles` i `identityServiceAccount` w `keycloak/suite.json`). Włącza je `DI_IDENTITY_CLIENT_SECRET`.
+
 ## Polecenia
 
 Uruchamiane na maszynie z Keycloak, wobec adresu wewnętrznego (`KEYCLOAK_URL`); w compose przez usługę `admin`:

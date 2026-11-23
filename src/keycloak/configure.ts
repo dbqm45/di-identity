@@ -28,14 +28,22 @@ export interface SuiteConfig {
   agentTokenSeconds: number;
   clients: SuiteClient[];
   identityProviders: { alias: string; providerId: string; displayName: string; clientIdEnv: string; clientSecretEnv: string }[];
+  /** Roles of other clients given to a client's service account (ADR 17 §2.4), e.g. di-channels → di-identity:people-reader. */
+  serviceRoles?: { client: string; roles: string[]; why?: string }[];
+  /** realm-management roles of the di-identity service account, for the people lookup API. */
+  identityServiceAccount?: { client: string; realmManagementRoles: string[]; why?: string };
 }
 
 export const SUITE_FILE = new URL('../../keycloak/suite.json', import.meta.url);
 export const loadSuite = (file: URL = SUITE_FILE): SuiteConfig => JSON.parse(readFileSync(file, 'utf8')) as SuiteConfig;
 
 export const SUITE_SCOPE = 'suite-identity';
-/** Scopes every product client gets; `email` only for DI3 clients. `basic` carries `sub` in Keycloak 26. */
-const BASE_SCOPES = ['acr', 'basic', 'profile', 'roles', 'web-origins', SUITE_SCOPE];
+/**
+ * Scopes every product client gets; `email` only for DI3 clients. `basic` carries `sub` in Keycloak 26;
+ * `service_account` (Keycloak adds it to clients with a service account) carries `client_id`, by which other suite
+ * services recognise a service token (ADR 17 §2.4).
+ */
+const BASE_SCOPES = ['acr', 'basic', 'profile', 'roles', 'web-origins', 'service_account', SUITE_SCOPE];
 
 interface Named {
   id: string;
@@ -162,6 +170,35 @@ export async function configure(admin: Admin, suite: SuiteConfig, env: NodeJS.Pr
       if (!have.some((s) => s.name === name)) await admin.call('PUT', `${R}/clients/${id}/default-client-scopes/${sid}`);
     }
     log(`client ${c.clientId}: ${found.length ? 'updated' : 'created'} (roles ${c.roles.join(', ')}${c.email ? ', email' : ''}${redirects.length ? '' : ', no redirect addresses yet'})`);
+  }
+
+  // Service accounts: roles other suite applications need when they call each other (ADR 17 §2.4).
+  const clientUuid = async (clientId: string): Promise<string> => {
+    const found = (await admin.call<Named[]>('GET', `${R}/clients?clientId=${encodeURIComponent(clientId)}`))[0];
+    if (!found) throw new Error(`client ${clientId} does not exist in realm ${suite.realm}`);
+    return found.id;
+  };
+  const grantToServiceAccount = async (clientId: string, roleClient: string, roleNames: string[]) => {
+    const sa = await admin.call<Named>('GET', `${R}/clients/${await clientUuid(clientId)}/service-account-user`);
+    const target = await clientUuid(roleClient);
+    const have = new Set((await admin.call<Named[]>('GET', `${R}/users/${sa.id}/role-mappings/clients/${target}`)).map((r) => r.name));
+    const roles = [];
+    for (const name of roleNames) if (!have.has(name)) roles.push(await admin.call('GET', `${R}/clients/${target}/roles/${encodeURIComponent(name)}`));
+    if (roles.length) await admin.call('POST', `${R}/users/${sa.id}/role-mappings/clients/${target}`, roles);
+  };
+  for (const s of suite.serviceRoles ?? []) {
+    const byClient = new Map<string, string[]>();
+    for (const spec of s.roles) {
+      const [roleClient, role] = spec.split(':');
+      if (!roleClient || !role) throw new Error(`service role ${spec} is not <client>:<role>`);
+      byClient.set(roleClient, [...(byClient.get(roleClient) ?? []), role]);
+    }
+    for (const [roleClient, roles] of byClient) await grantToServiceAccount(s.client, roleClient, roles);
+    log(`service account ${s.client}: ${s.roles.join(', ')}`);
+  }
+  if (suite.identityServiceAccount) {
+    await grantToServiceAccount(suite.identityServiceAccount.client, 'realm-management', suite.identityServiceAccount.realmManagementRoles);
+    log(`service account ${suite.identityServiceAccount.client}: realm-management ${suite.identityServiceAccount.realmManagementRoles.join(', ')}`);
   }
 
   // Identity providers (Google first, DI2); skipped until the client id and secret are set.

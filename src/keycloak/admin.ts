@@ -20,20 +20,33 @@ export interface Admin {
 }
 
 export function keycloakAdmin(input: { url: string; username: string; password: string; fetchImpl?: typeof fetch }): Admin {
-  const url = input.url.replace(/\/+$/, '');
-  const f = input.fetchImpl ?? fetch;
+  return adminClient(input.url, input.fetchImpl, 'master', { grant_type: 'password', client_id: 'admin-cli', username: input.username, password: input.password });
+}
+
+/**
+ * The same Admin REST API with the service account of the di-identity client in the suite realm (client
+ * credentials): the running service reads users with only the realm-management roles `configure` gives that account
+ * (view-users, query-users), never with the master administrator.
+ */
+export function keycloakServiceAdmin(input: { url: string; realm: string; clientId: string; clientSecret: string; fetchImpl?: typeof fetch }): Admin {
+  return adminClient(input.url, input.fetchImpl, input.realm, { grant_type: 'client_credentials', client_id: input.clientId, client_secret: input.clientSecret });
+}
+
+function adminClient(rawUrl: string, fetchImpl: typeof fetch | undefined, realm: string, form: Record<string, string>): Admin {
+  const url = rawUrl.replace(/\/+$/, '');
+  const f = fetchImpl ?? fetch;
   let token = '';
   let until = 0;
 
   const signIn = async (): Promise<string> => {
     if (token && Date.now() < until) return token;
-    const res = await f(`${url}/realms/master/protocol/openid-connect/token`, {
+    const res = await f(`${url}/realms/${realm}/protocol/openid-connect/token`, {
       method: 'POST',
       redirect: 'error',
       signal: AbortSignal.timeout(10_000),
-      body: new URLSearchParams({ grant_type: 'password', client_id: 'admin-cli', username: input.username, password: input.password }),
+      body: new URLSearchParams(form),
     });
-    if (!res.ok) throw new AdminError(res.status, `Keycloak administrator sign-in failed (HTTP ${res.status})`);
+    if (!res.ok) throw new AdminError(res.status, `Keycloak sign-in for the admin API failed (HTTP ${res.status})`);
     const body = (await res.json()) as { access_token: string; expires_in: number };
     token = body.access_token;
     until = Date.now() + Math.max(5, body.expires_in - 15) * 1000;

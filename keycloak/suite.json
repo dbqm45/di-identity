@@ -5,15 +5,97 @@
   "personTokenSeconds": 300,
   "agentTokenSeconds": 600,
   "clients": [
-    { "clientId": "di-decision", "name": "DI Decision", "roles": ["viewer", "editor", "admin"], "email": false },
-    { "clientId": "di-definition", "name": "DI Definition", "roles": ["viewer", "editor", "admin"], "email": false },
-    { "clientId": "di-release", "name": "DI Release", "roles": ["viewer", "editor", "admin"], "email": false },
-    { "clientId": "di-release-control", "name": "DI Release Control", "roles": ["viewer", "editor", "admin"], "email": false },
-    { "clientId": "di-channels", "name": "DI Channels", "roles": ["viewer", "admin"], "email": true },
-    { "clientId": "di-admin", "name": "DI Admin Console", "roles": ["admin"], "email": true },
-    { "clientId": "di-identity", "name": "DI Identity", "roles": ["admin"], "email": false }
+    {
+      "clientId": "di-decision",
+      "name": "DI Decision",
+      "roles": [
+        "viewer",
+        "editor",
+        "admin"
+      ],
+      "email": false
+    },
+    {
+      "clientId": "di-definition",
+      "name": "DI Definition",
+      "roles": [
+        "viewer",
+        "editor",
+        "admin"
+      ],
+      "email": false
+    },
+    {
+      "clientId": "di-release",
+      "name": "DI Release",
+      "roles": [
+        "viewer",
+        "editor",
+        "admin"
+      ],
+      "email": false
+    },
+    {
+      "clientId": "di-release-control",
+      "name": "DI Release Control",
+      "roles": [
+        "viewer",
+        "editor",
+        "admin"
+      ],
+      "email": false
+    },
+    {
+      "clientId": "di-channels",
+      "name": "DI Channels",
+      "roles": [
+        "viewer",
+        "admin"
+      ],
+      "email": true
+    },
+    {
+      "clientId": "di-admin",
+      "name": "DI Admin Console",
+      "roles": [
+        "admin"
+      ],
+      "email": true
+    },
+    {
+      "clientId": "di-identity",
+      "name": "DI Identity",
+      "roles": [
+        "admin",
+        "people-reader"
+      ],
+      "email": false
+    }
   ],
   "identityProviders": [
-    { "alias": "google", "providerId": "google", "displayName": "Google", "clientIdEnv": "GOOGLE_CLIENT_ID", "clientSecretEnv": "GOOGLE_CLIENT_SECRET" }
-  ]
+    {
+      "alias": "google",
+      "providerId": "google",
+      "displayName": "Google",
+      "clientIdEnv": "GOOGLE_CLIENT_ID",
+      "clientSecretEnv": "GOOGLE_CLIENT_SECRET"
+    }
+  ],
+  "serviceRoles": [
+    {
+      "client": "di-channels",
+      "roles": [
+        "di-identity:people-reader"
+      ],
+      "why": "DI Channels finds the suite person behind a Slack user by e-mail"
+    }
+  ],
+  "identityServiceAccount": {
+    "client": "di-identity",
+    "realmManagementRoles": [
+      "view-users",
+      "query-users"
+    ],
+    "why": "the people lookup API reads users and their organizations"
+  }
 }

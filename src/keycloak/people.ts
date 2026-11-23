@@ -63,3 +63,28 @@ export async function revokeRole(admin: Admin, input: { realm: string; who: stri
   const { clientUuid, role } = await productRole(admin, input.realm, input.role);
   await admin.call('DELETE', `/${input.realm}/users/${person.id}/role-mappings/clients/${clientUuid}`, [role]);
 }
+
+export interface FoundPerson {
+  sub: string;
+  name: string;
+  organizations: string[];
+}
+
+/**
+ * The person with this verified e-mail, for another suite application (DI Channels finds the person behind a Slack
+ * user). Only an enabled person with a verified address counts (people from Google have it verified); agents never;
+ * two accounts with one address count as none. Gives `sub`, the display name and organization aliases, nothing else.
+ */
+export async function lookupByEmail(admin: Admin, realm: string, email: string): Promise<FoundPerson | null> {
+  const R = `/${realm}`;
+  const found = await admin.call<(User & { enabled?: boolean; emailVerified?: boolean; firstName?: string; lastName?: string })[]>(
+    'GET',
+    `${R}/users?email=${encodeURIComponent(email)}&exact=true&briefRepresentation=false&max=2`,
+  );
+  const people = found.filter((u) => u.enabled && u.emailVerified && !u.attributes?.kind?.includes('agent') && !u.username?.startsWith('service-account-'));
+  if (people.length !== 1 || !people[0]) return null;
+  const u = people[0];
+  const orgs = await admin.call<{ alias?: string }[]>('GET', `${R}/organizations/members/${u.id}/organizations`);
+  const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.username || u.id;
+  return { sub: u.id, name, organizations: orgs.map((o) => o.alias).filter((a): a is string => !!a) };
+}
