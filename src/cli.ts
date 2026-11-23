@@ -4,6 +4,9 @@
  *
  *   npm run identity -- configure
  *   npm run identity -- org create <alias> "<name>" [<domain>]
+ *   npm run identity -- org add-member <alias> <e-mail | user name | sub>
+ *   npm run identity -- role grant <client>:<role> <e-mail | user name | sub>      # e.g. di-release-control:admin
+ *   npm run identity -- role revoke <client>:<role> <e-mail | user name | sub>
  *   npm run identity -- agent create <persona> --org <alias> --owner <sub> --purpose "<text>" --key <public.jwk.json> [--role di-decision:viewer ...]
  *   npm run identity -- agent list --org <alias>
  *   npm run identity -- agent disable <client-id> | agent enable <client-id>
@@ -16,6 +19,7 @@ import { readFileSync } from 'node:fs';
 import { keycloakAdmin } from './keycloak/admin.ts';
 import { createAgent, createOrganization, disableOrganizationAgents, listAgents, setAgentEnabled } from './keycloak/agents.ts';
 import { configure, loadSuite } from './keycloak/configure.ts';
+import { addMember, grantRole, revokeRole } from './keycloak/people.ts';
 
 const need = (name: string): string => {
   const v = process.env[name]?.trim();
@@ -57,6 +61,20 @@ async function main(argv: string[]): Promise<void> {
     if (!alias || !name) throw new Error('usage: org create <alias> "<name>" [<domain>]');
     await createOrganization(admin, { realm: suite.realm, alias, name, ...(domain ? { domain } : {}) });
     console.log(`✓ organization ${alias} created`);
+    return;
+  }
+  if (area === 'org' && action === 'add-member') {
+    const [alias, who] = positional;
+    if (!alias || !who) throw new Error('usage: org add-member <alias> <e-mail | user name | sub>');
+    const added = await addMember(admin, { realm: suite.realm, organization: alias, who });
+    console.log(added ? `✓ ${who} added to ${alias}` : `✓ ${who} already is a member of ${alias}`);
+    return;
+  }
+  if (area === 'role' && (action === 'grant' || action === 'revoke')) {
+    const [role, who] = positional;
+    if (!role || !who) throw new Error(`usage: role ${action} <client>:<role> <e-mail | user name | sub>`);
+    await (action === 'grant' ? grantRole : revokeRole)(admin, { realm: suite.realm, role, who });
+    console.log(action === 'grant' ? `✓ ${role} granted to ${who}` : `✓ ${role} revoked from ${who}`);
     return;
   }
   if (area === 'agent' && action === 'create') {

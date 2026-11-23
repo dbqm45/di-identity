@@ -13,6 +13,7 @@ produktów jako role klientów i agenci jako osobne podmioty z właścicielem (D
 | Stan realmu | `keycloak/suite.json` | aplikacje suity (klienci OIDC) z rolami, które dostają e-mail (DI3), czas życia tokenów osoby (5 min) i agenta (10 min), dostawcy tożsamości |
 | Konfiguracja | `src/keycloak/configure.ts` | doprowadza Keycloak do stanu z `suite.json`; można uruchamiać wielokrotnie; nie usuwa organizacji, osób ani agentów |
 | Agenci i organizacje | `src/keycloak/agents.ts` | organizacja z domeną; agent: klient `agent-<persona>-<organizacja>` z kontem usługowym, właścicielem, celem, datą przeglądu (90 dni), `private_key_jwt`, rolami (nigdy `admin`); wyłączenie agenta i wszystkich agentów organizacji (AN6) |
+| Osoby | `src/keycloak/people.ts` | dodanie osoby do organizacji i nadanie albo odebranie roli w produkcie (po e-mailu, nazwie użytkownika albo `sub`); odmawia dla agentów |
 | Polecenia | `src/cli.ts` | administracja do czasu Admin Console (AC1) |
 | Usługa | `src/` z szablonu | `GET /health`, `GET /api/me`; tu dojdzie API Admin Console (krok 14b) |
 | Wdrożenie | `compose.yaml`, `Caddyfile`, `deploy/` | Keycloak, usługa, jeden Postgres z dwiema bazami, Caddy z TLS; konsola i API administracyjne Keycloak niedostępne z zewnątrz |
@@ -24,7 +25,7 @@ produktów jako role klientów i agenci jako osobne podmioty z właścicielem (D
 | `sub` | identyfikator osoby w suicie | identyfikator agenta (konto usługowe) |
 | `azp` | klient aplikacji, której wydano token | `agent-<persona>-<organizacja>` |
 | `organization` | lista aliasów organizacji, np. `["acme"]` | tak samo |
-| `resource_access.<aplikacja>.roles` | role w danej aplikacji | role nadane agentowi |
+| `resource_access.<aplikacja>.roles` | role w danej aplikacji; w tokenie dostępu i w ID tokenie (dla aplikacji, które czytają role z ID tokenu, np. DI Release Control) | role nadane agentowi |
 | `kind`, `owner` | brak | `agent` i `sub` właściciela |
 | `email` | tylko dla aplikacji z `email: true` (DI3) | nigdy (szablon go pomija) |
 
@@ -38,6 +39,9 @@ Uruchamiane na maszynie z Keycloak, wobec adresu wewnętrznego (`KEYCLOAK_URL`);
 ```sh
 docker compose run --rm admin configure
 docker compose run --rm admin org create acme "Acme" acme.com
+docker compose run --rm admin org add-member acme ola@acme.com      # po pierwszym logowaniu osoby
+docker compose run --rm admin role grant di-release-control:admin ola@acme.com
+docker compose run --rm admin role revoke di-release-control:admin ola@acme.com
 docker compose run --rm admin agent create tomasz --org acme --owner <sub-osoby> \
   --purpose "architekt fabryki" --key agent-keys/tomasz-acme.jwk.json --role di-decision:viewer
 docker compose run --rm admin agent list --org acme
