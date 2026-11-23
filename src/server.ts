@@ -35,14 +35,15 @@ const app = buildApp({
 });
 
 // The people lookup for other suite applications (DI Channels), with the di-identity service account. Off until its
-// secret is set: KEYCLOAK_URL (internal) and DI_IDENTITY_CLIENT_SECRET (client di-identity in the suite realm).
+// secret is set: KEYCLOAK_URL (internal) and DI_IDENTITY_CLIENT_SECRET (client di-identity in the suite realm), or
+// SUITE_CLIENT_SECRET_DI_IDENTITY as `npm run identity -- secrets --env-file .env` writes it.
 const keycloakUrl = process.env.KEYCLOAK_URL?.trim();
-const clientSecret = process.env.DI_IDENTITY_CLIENT_SECRET?.trim();
+const clientSecret = process.env.DI_IDENTITY_CLIENT_SECRET?.trim() || process.env.SUITE_CLIENT_SECRET_DI_IDENTITY?.trim();
 if (keycloakUrl && clientSecret) {
   const admin = keycloakServiceAdmin({ url: keycloakUrl, realm: 'suite', clientId: config.oidcAudience, clientSecret });
   peopleRoutes(app, { verifier, lookup: (email) => lookupByEmail(admin, 'suite', email) });
 } else {
-  app.log.warn('people lookup is off: set KEYCLOAK_URL and DI_IDENTITY_CLIENT_SECRET');
+  app.log.warn('people lookup is off: set KEYCLOAK_URL and DI_IDENTITY_CLIENT_SECRET (or run: npm run identity -- secrets --env-file .env)');
 }
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

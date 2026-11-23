@@ -57,6 +57,16 @@ docker compose run --rm admin agent disable agent-tomasz-acme
 docker compose run --rm admin agent disable-all --org acme      # wyłącznik organizacji
 ```
 
+Sekrety klientów aplikacji (Keycloak generuje je sam) bez kopiowania z konsoli: `secrets` zapisuje je do pliku env jako
+`SUITE_CLIENT_SECRET_<KLIENT>` (np. `SUITE_CLIENT_SECRET_DI_CHANNELS`). Pozostałe linie pliku zostają, plik ma prawa
+0600, a wartości nie trafiają na ekran ani do logu. Ta usługa czyta stamtąd swój sekret
+(`SUITE_CLIENT_SECRET_DI_IDENTITY`), więc po tym poleceniu API wyszukiwania osób działa bez `DI_IDENTITY_CLIENT_SECRET`.
+
+```sh
+npm run identity -- configure
+npm run identity -- secrets --env-file .env          # lokalnie; pdi: sdlc up robi to samo do ~/.sdlc/env
+```
+
 Klucz agenta: para RSA, do Keycloak trafia tylko publiczny JWK (polecenie odrzuca klucz z częścią prywatną).
 Prywatny klucz zostaje u tego, kto uruchamia agenta, poza kontenerem fazy (DZ9).
 
