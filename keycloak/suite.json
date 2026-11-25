@@ -81,6 +81,11 @@
         "http://localhost:33418/callback",
         "http://127.0.0.1:33418/callback"
       ],
+      "offlineSession": {
+        "idleSeconds": 86400,
+        "maxSeconds": 1209600,
+        "why": "MCP clients ask for offline_access (SEP-2207) and the sign-in fails without it; owner's decision 2026-11-25: allowed for this client only, ending after 24 h without use and after 14 days at most."
+      },
       "why": "Remote MCP server of pdi (dbqm45/pdi docs/plan-mcp-zdalny.md): Claude Code signs in with PKCE on a fixed loopback port (claude mcp add --client-id di-decision-mcp --callback-port 33418). No secret, no email (DI3); the token carries only DI Decision's roles and audience. Registered here instead of dynamic client registration, which would open anonymous registration in the realm."
     }
   ],

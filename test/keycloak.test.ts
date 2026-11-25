@@ -143,8 +143,14 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     assert.deepEqual([...(c.redirectUris as string[])].sort(), ['http://127.0.0.1:33418/callback', 'http://localhost:33418/callback']);
     const scopes = (await admin.call<{ name: string }[]>('GET', `${R}/clients/${c.id}/default-client-scopes`)).map((s) => s.name);
     assert.ok(!scopes.includes('email'));
+    // MCP clients ask for offline_access (SEP-2207): only that optional scope, with a short offline session (owner's
+    // decision 2026-11-25: 24 h without use, 14 days at most); no phone, address or other realm default.
     const optional = await admin.call<{ name: string }[]>('GET', `${R}/clients/${c.id}/optional-client-scopes`);
-    assert.deepEqual(optional.map((s) => s.name), [], 'no offline_access, phone, address or other optional scope');
+    assert.deepEqual(optional.map((s) => s.name), ['offline_access']);
+    assert.equal((c.attributes as Record<string, string>)['client.offline.session.idle.timeout'], '86400');
+    assert.equal((c.attributes as Record<string, string>)['client.offline.session.max.lifespan'], '1209600');
+    const realm = await admin.call<{ offlineSessionMaxLifespanEnabled: boolean }>('GET', R);
+    assert.equal(realm.offlineSessionMaxLifespanEnabled, true, 'without it Keycloak ignores the client maximum');
 
     await grantRole(admin, { realm: suite.realm, who: person, role: 'di-decision:viewer' });
     const claims = await admin.call<Record<string, unknown>>(
