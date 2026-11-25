@@ -45,8 +45,28 @@ wtedy, gdy `azp` wskazuje tę aplikację (albo klienta z `OIDC_AUTHORIZED_PARTIE
 `GET /api/people?email=<adres>` zwraca osobę z suity z tym zweryfikowanym adresem e-mail: `{ sub, name, organizations }`
 (404, gdy nie ma dokładnie jednej takiej osoby; agentów nigdy). Tylko dla tokenu konta usługowego aplikacji z listy
 `OIDC_SERVICE_CLIENTS` z rolą `di-identity:people-reader` (na start DI Channels: osoba ze Slacka → osoba w suicie).
-Usługa czyta użytkowników kontem usługowym klienta `di-identity` z rolami `view-users` i `query-users`; nadaje je
-`configure` (`serviceRoles` i `identityServiceAccount` w `keycloak/suite.json`). Włącza je `DI_IDENTITY_CLIENT_SECRET`.
+Usługa czyta użytkowników kontem usługowym klienta `di-identity`; role w `realm-management` nadaje `configure`
+(`serviceRoles` i `identityServiceAccount` w `keycloak/suite.json`). Włącza je `DI_IDENTITY_CLIENT_SECRET`.
+
+## Admin Console (AC1)
+
+`/admin` — ekran administratora organizacji klienta ([plan](docs/plan-admin-console.md)): ludzie organizacji z rolami
+w produktach (dodanie po e-mailu osoby, która raz się zalogowała; usunięcie; nadanie i odebranie roli), agenci
+organizacji (wyłączenie, włączenie, wyłącznik wszystkich — AN6) i dziennik zmian (`admin_events`, kto i co zmienił).
+Logowanie przez suitę klientem `di-admin` (kod z PKCE); wchodzi osoba z rolą `di-admin:admin` i widzi tylko
+organizacje ze swojego tokenu; ostatni administrator organizacji nie odbierze sobie tej roli i nie usunie siebie.
+Sesje w Postgresie (`admin_sessions`, tylko skrót ciasteczka, 12 h); każda zmiana wymaga tokenu formularza i nagłówka
+Origin z tej konsoli. Strony bez JavaScriptu.
+
+Zmiany robi konto usługowe `di-identity`. Najmniejszy zestaw ról, który przechodzi test na Keycloak 26.4.7
+(2026-11-25): `view-users`, `query-users`, `manage-users`, `view-clients`, `manage-clients` i **`manage-realm`** —
+API organizacji odpowiada 403 bez `manage-realm`, nawet na odczyt. To szerokie uprawnienie (ustawienia całego realmu),
+więc sekret klienta `di-identity` trzeba chronić jak hasło administratora Keycloak.
+
+Włączenie: `ADMIN_CLIENT_SECRET` (albo `SUITE_CLIENT_SECRET_DI_ADMIN` z `secrets`), `KEYCLOAK_URL`, sekret
+`di-identity`; w realmie adres `REDIRECT_DI_ADMIN=<ADMIN_PUBLIC_URL>/*` przed `configure`. Lokalnie:
+`http://127.0.0.1:3200/admin`. Pierwszego administratora organizacji nadaje się poleceniem:
+`npm run identity -- role grant di-admin:admin <osoba>`.
 
 ## Polecenia
 

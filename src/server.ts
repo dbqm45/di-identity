@@ -9,6 +9,10 @@ import { postgresEventStore } from './events/store.ts';
 import { keycloakServiceAdmin } from './keycloak/admin.ts';
 import { lookupByEmail } from './keycloak/people.ts';
 import { peopleRoutes } from './people-api.ts';
+import { adminRoutes } from './admin/routes.ts';
+import { keycloakDirectory } from './admin/directory.ts';
+import { postgresAdminStore } from './admin/store.ts';
+import { loadSuite } from './keycloak/configure.ts';
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
 const config = loadConfig(process.env, version);
@@ -44,6 +48,30 @@ if (keycloakUrl && clientSecret) {
   peopleRoutes(app, { verifier, lookup: (email) => lookupByEmail(admin, 'suite', email) });
 } else {
   app.log.warn('people lookup is off: set KEYCLOAK_URL and DI_IDENTITY_CLIENT_SECRET (or run: npm run identity -- secrets --env-file .env)');
+}
+
+// The admin console, stage AC1 (docs/plan-admin-console.md): sign-in with the di-admin client, changes with the
+// di-identity service account. Off until both secrets are set (`npm run identity -- secrets --env-file .env` writes them)
+// and the realm has the redirect address REDIRECT_DI_ADMIN=<ADMIN_PUBLIC_URL>/* (configure).
+const adminSecret = process.env.ADMIN_CLIENT_SECRET?.trim() || process.env.SUITE_CLIENT_SECRET_DI_ADMIN?.trim();
+if (keycloakUrl && clientSecret && adminSecret) {
+  const suite = loadSuite();
+  const products = Object.fromEntries(suite.clients.filter((c) => c.clientId !== 'di-identity').map((c) => [c.clientId, c.roles]));
+  const service = keycloakServiceAdmin({ url: keycloakUrl, realm: suite.realm, clientId: config.oidcAudience, clientSecret });
+  const publicUrl = process.env.ADMIN_PUBLIC_URL?.trim() || `http://127.0.0.1:${config.port}`;
+  adminRoutes(app, {
+    issuer: config.oidcIssuer,
+    clientId: 'di-admin',
+    clientSecret: adminSecret,
+    publicUrl,
+    verifier: createVerifier({ issuer: config.oidcIssuer, audience: 'di-admin', fetchJwks: discoveryJwks(config.oidcIssuer) }),
+    store: postgresAdminStore(pool),
+    directory: keycloakDirectory(service, suite.realm, products),
+    products,
+  });
+  app.log.info(`admin console: ${publicUrl}/admin`);
+} else {
+  app.log.warn('admin console is off: set KEYCLOAK_URL, the di-identity secret and ADMIN_CLIENT_SECRET (or SUITE_CLIENT_SECRET_DI_ADMIN)');
 }
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
