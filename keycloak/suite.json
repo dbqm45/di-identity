@@ -94,8 +94,12 @@
     "client": "di-identity",
     "realmManagementRoles": [
       "view-users",
-      "query-users"
+      "query-users",
+      "manage-users",
+      "view-clients",
+      "manage-clients",
+      "manage-realm"
     ],
-    "why": "the people lookup API reads users and their organizations"
+    "why": "the people lookup API reads users and their organizations; the admin console (docs/plan-admin-console.md) changes memberships and product roles (manage-users, view-clients), turns agents off and on (manage-clients) and reads and changes organization members — Keycloak 26.4 answers 403 to the organizations API without manage-realm, even to reads (checked 2026-11-25)"
   }
 }

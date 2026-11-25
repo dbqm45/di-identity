@@ -7,7 +7,7 @@ import { keycloakAdmin, keycloakServiceAdmin } from '../src/keycloak/admin.ts';
 import { memoryEventStore } from '../src/events/store.ts';
 import { loadVocabulary } from '../src/events/envelope.ts';
 import { peopleRoutes } from '../src/people-api.ts';
-import { createAgent, createOrganization, disableOrganizationAgents, listAgents, setAgentEnabled } from '../src/keycloak/agents.ts';
+import { createAgent, createOrganization, disableOrganizationAgents, listAgents, organizationByAlias, setAgentEnabled } from '../src/keycloak/agents.ts';
 import { configure, loadSuite } from '../src/keycloak/configure.ts';
 import { addMember, grantRole, lookupByEmail, revokeRole } from '../src/keycloak/people.ts';
 import { clientSecrets, secretVariable } from '../src/keycloak/secrets.ts';
@@ -162,6 +162,21 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     const form = { grant_type: 'client_credentials', client_id: agent.clientId, client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer', client_assertion: assertion };
     assert.equal((await tokenRequest(form)).status, 200);
     assert.equal((await tokenRequest(form)).status, 400);
+  });
+
+  // The admin console (docs/plan-admin-console.md) acts with the di-identity service account, never the master admin.
+  // Keycloak 26.4 answers 403 to the organizations API without manage-realm, even to reads (checked 2026-11-25).
+  await t.test('the di-identity service account can do what the admin console does', async () => {
+    const secrets = await clientSecrets(admin, suite);
+    const service = keycloakServiceAdmin({ url: url!, realm: suite.realm, clientId: 'di-identity', clientSecret: secrets.get(secretVariable('di-identity'))! });
+    const org = await organizationByAlias(service, suite.realm, run);
+    const members = await service.call<{ id: string }[]>('GET', `${R}/organizations/${org.id}/members?max=100`);
+    assert.ok(members.some((m) => m.id === person));
+    await grantRole(service, { realm: suite.realm, who: person, role: 'di-definition:viewer' });
+    await revokeRole(service, { realm: suite.realm, who: person, role: 'di-definition:viewer' });
+    assert.ok((await listAgents(service, suite.realm, run)).some((a) => a.clientId === agent.clientId));
+    await setAgentEnabled(service, suite.realm, agent.clientId, false);
+    await setAgentEnabled(service, suite.realm, agent.clientId, true);
   });
 
   await t.test('DI Channels finds the person by verified e-mail through the di-identity API', async () => {
