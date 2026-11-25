@@ -2,6 +2,12 @@
 
 Notable changes, newest first. Entries are written by `npm run release` from Conventional Commits (RELEASING.md).
 
+## [0.1.9] - 2026-11-25
+
+### Added
+
+- **admin:** let an organization sign in with its own OIDC provider (#12)
+
 ## [0.1.8] - 2026-11-25
 
 ### Added
