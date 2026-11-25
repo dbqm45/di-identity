@@ -1,6 +1,6 @@
 # Admin Console, etap AC1 (krok 14b planu budowy suity) — plan
 
-Stan: 2026-11-25, propozycja do decyzji właściciela (bez kodu). Źródło zakresu: `dbqm45/pdi`
+Stan: 2026-11-25, decyzje 1–6 przyjęte przez właściciela; kroki 1–5 zrobione (ten PR), sprawdzone na żywo. Źródło zakresu: `dbqm45/pdi`
 `docs/plan-budowy-suity.md` §2b (AC1: organizacja, użytkownicy, zaproszenia, uprawnienia do produktów, dostawca
 tożsamości klienta, dziennik zmian) i ADR 17 §2.5. Cztery aplikacje logują już przez suitę (DI Release Control,
 DI Definition, DI Release, konsola pdi), więc to, czym administrator dziś zarządza poleceniami (`npm run identity --
@@ -60,3 +60,12 @@ org add-member`, `role grant`, `agent disable-all`), dostaje ekran.
   (sprawdza organizację z sesji przy każdej zmianie) — testy muszą pokryć próbę zmiany osoby spoza organizacji.
 - Role w produktach są dziś realmowe dla osoby, nie per organizacja: osoba w dwóch organizacjach ma te same role
   w obu. Wystarczy przy jednej organizacji na osobę (dziś); inaczej — osobna decyzja.
+
+## Co wyszło przy wdrożeniu (2026-11-25)
+
+- Decyzja 5: najmniejszy zestaw ról konta usługowego to `view-users`, `query-users`, `manage-users`, `view-clients`,
+  `manage-clients` i `manage-realm` — API organizacji Keycloak 26.4.7 odpowiada 403 bez `manage-realm`, nawet na
+  odczyt (`view-realm` nie wystarcza). Zmierzone krok po kroku na lokalnym Keycloaku; test w `test/keycloak.test.ts`.
+- Token sprawdza weryfikator szablonu (token dostępu klienta `di-admin`), bez nowej kryptografii.
+- Na żywo: `adm.test` (`di-admin:admin`, `acme`) nadał rolę w produkcie i zobaczył ją w dzienniku; próba odebrania
+  sobie ostatniej roli administratora — odmowa; `ola.test` bez tej roli — odmowa przy logowaniu.
