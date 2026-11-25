@@ -12,6 +12,8 @@ import { AdminError, type Admin } from './admin.ts';
  *   product roles also in the ID token (`resource_access.<client>.roles`);
  * - one confidential client per product, with its roles and an audience mapper; scope `email` only for clients with
  *   `email: true` (DI3), also removed from the realm defaults so a new client never gets it by accident;
+ * - public clients for tools that sign people in on their own machine (the MCP client of DI Decision): PKCE, no
+ *   secret, no service account, never `email`; their tokens carry only the roles and audience of one product client;
  * - Google as identity provider when its client id and secret are in the environment (DI2).
  */
 export interface SuiteClient {
@@ -21,12 +23,22 @@ export interface SuiteClient {
   email: boolean;
 }
 
+/** A public client of one product (no secret): its token is for `audience` only and carries only that client's roles. */
+export interface SuitePublicClient {
+  clientId: string;
+  name: string;
+  audience: string;
+  redirectUris: string[];
+  why?: string;
+}
+
 export interface SuiteConfig {
   realm: string;
   displayName: string;
   personTokenSeconds: number;
   agentTokenSeconds: number;
   clients: SuiteClient[];
+  publicClients?: SuitePublicClient[];
   identityProviders: { alias: string; providerId: string; displayName: string; clientIdEnv: string; clientSecretEnv: string }[];
   /** Roles of other clients given to a client's service account (ADR 17 §2.4), e.g. di-channels → di-identity:people-reader. */
   serviceRoles?: { client: string; roles: string[]; why?: string }[];
@@ -199,6 +211,53 @@ export async function configure(admin: Admin, suite: SuiteConfig, env: NodeJS.Pr
   if (suite.identityServiceAccount) {
     await grantToServiceAccount(suite.identityServiceAccount.client, 'realm-management', suite.identityServiceAccount.realmManagementRoles);
     log(`service account ${suite.identityServiceAccount.client}: realm-management ${suite.identityServiceAccount.realmManagementRoles.join(', ')}`);
+  }
+
+  // Public clients (no secret, PKCE): only the roles of their product client reach the token (no full scope), and the
+  // audience is that client, so other products' verifiers refuse the token.
+  for (const c of suite.publicClients ?? []) {
+    const redirects = [...c.redirectUris, ...redirectsFor(c.clientId, env)];
+    const body = {
+      clientId: c.clientId,
+      name: c.name,
+      enabled: true,
+      protocol: 'openid-connect',
+      publicClient: true,
+      standardFlowEnabled: true,
+      implicitFlowEnabled: false,
+      directAccessGrantsEnabled: false,
+      serviceAccountsEnabled: false,
+      fullScopeAllowed: false,
+      redirectUris: redirects,
+      webOrigins: [],
+      attributes: { 'pkce.code.challenge.method': 'S256', 'post.logout.redirect.uris': '' },
+    };
+    const found = await admin.call<Named[]>('GET', `${R}/clients?clientId=${encodeURIComponent(c.clientId)}`);
+    let id = found[0]?.id;
+    if (id) await admin.call('PUT', `${R}/clients/${id}`, { ...body, id });
+    else id = await admin.create(`${R}/clients`, body);
+
+    const mappers = await admin.call<Named[]>('GET', `${R}/clients/${id}/protocol-mappers/models`);
+    const audience = mapper('audience', 'oidc-audience-mapper', { 'included.client.audience': c.audience, 'access.token.claim': 'true', 'introspection.token.claim': 'true' });
+    const old = mappers.find((m) => m.name === 'audience');
+    if (old) await admin.call('PUT', `${R}/clients/${id}/protocol-mappers/models/${old.id}`, { ...audience, id: old.id });
+    else await admin.call('POST', `${R}/clients/${id}/protocol-mappers/models`, audience);
+
+    const target = await clientUuid(c.audience);
+    const productRoles = await admin.call<Named[]>('GET', `${R}/clients/${target}/roles`);
+    const mapped = new Set((await admin.call<Named[]>('GET', `${R}/clients/${id}/scope-mappings/clients/${target}`)).map((r) => r.name));
+    const missing = productRoles.filter((r) => !mapped.has(r.name));
+    if (missing.length) await admin.call('POST', `${R}/clients/${id}/scope-mappings/clients/${target}`, missing);
+
+    const want = new Set(BASE_SCOPES.filter((s) => s !== 'service_account'));
+    const have = await admin.call<Named[]>('GET', `${R}/clients/${id}/default-client-scopes`);
+    for (const s of have) if (!want.has(s.name ?? '')) await admin.call('DELETE', `${R}/clients/${id}/default-client-scopes/${s.id}`);
+    for (const name of want) {
+      const sid = scopeIds.get(name);
+      if (!sid) throw new Error(`client scope ${name} does not exist in realm ${suite.realm}`);
+      if (!have.some((s) => s.name === name)) await admin.call('PUT', `${R}/clients/${id}/default-client-scopes/${sid}`);
+    }
+    log(`public client ${c.clientId}: ${found.length ? 'updated' : 'created'} (for ${c.audience}, PKCE, no email)`);
   }
 
   // Identity providers (Google first, DI2); skipped until the client id and secret are set.

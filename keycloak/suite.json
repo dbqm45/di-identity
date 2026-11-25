@@ -72,6 +72,18 @@
       "email": false
     }
   ],
+  "publicClients": [
+    {
+      "clientId": "di-decision-mcp",
+      "name": "DI Decision MCP",
+      "audience": "di-decision",
+      "redirectUris": [
+        "http://localhost:33418/callback",
+        "http://127.0.0.1:33418/callback"
+      ],
+      "why": "Remote MCP server of pdi (dbqm45/pdi docs/plan-mcp-zdalny.md): Claude Code signs in with PKCE on a fixed loopback port (claude mcp add --client-id di-decision-mcp --callback-port 33418). No secret, no email (DI3); the token carries only DI Decision's roles and audience. Registered here instead of dynamic client registration, which would open anonymous registration in the realm."
+    }
+  ],
   "identityProviders": [
     {
       "alias": "google",
