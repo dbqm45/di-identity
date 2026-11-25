@@ -69,6 +69,18 @@ Włączenie: `ADMIN_CLIENT_SECRET` (albo `SUITE_CLIENT_SECRET_DI_ADMIN` z `secre
 `http://127.0.0.1:3200/admin`. Pierwszego administratora organizacji nadaje się poleceniem:
 `npm run identity -- role grant di-admin:admin <osoba>`.
 
+### Zaproszenia linkiem (AC1b.1)
+
+Strona **Invitations** ([plan](docs/plan-admin-console-ac1b.md)): admin wybiera role w produktach i dostaje link
+`<ADMIN_PUBLIC_URL>/admin/join/<token>`. Konsola pokazuje go tylko raz, a admin wysyła go sam, bo poczty jeszcze nie ma.
+Link działa raz i przez 7 dni, a otwarte zaproszenie można odwołać. W bazie (`admin_invitations`) jest tylko skrót
+tokenu, bez e-maila zaproszonego (DI3). Osoba otwiera link i loguje się przez suitę: Google albo dostawcę
+organizacji, nigdy hasłem (DI1). Wtedy trafia do organizacji i dostaje role z zaproszenia, których jeszcze nie miała.
+Agent zaproszenia nie przyjmie. W dzienniku są `invitation_created`, `invitation_revoked` i `invitation_accepted`
+(z osobą, która przyjęła). Uwaga przy wdrożeniu: `Caddyfile` blokuje z zewnątrz całe `/admin`, które jest też
+ścieżką konsoli Keycloak. Konsola i linki zaproszeń działają więc lokalnie albo przez tunel, dopóki hosting nie
+dostanie dla nich osobnej domeny.
+
 ## Polecenia
 
 Uruchamiane na maszynie z Keycloak, wobec adresu wewnętrznego (`KEYCLOAK_URL`); w compose przez usługę `admin`:

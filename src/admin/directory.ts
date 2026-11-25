@@ -31,6 +31,8 @@ export interface Directory {
   people(organization: string): Promise<Person[]>;
   /** Adds a person who has signed in to the suite at least once; DirectoryError otherwise. */
   add(organization: string, email: string): Promise<Person>;
+  /** Adds the person with this `sub` (from an invitation); `added` false when they already were a member. */
+  join(organization: string, id: string): Promise<{ person: Person; added: boolean }>;
   remove(organization: string, id: string): Promise<void>;
   grant(id: string, role: string): Promise<void>;
   revoke(id: string, role: string): Promise<void>;
@@ -77,6 +79,11 @@ export function keycloakDirectory(admin: Admin, realm: string, products: Record<
       }
       await addMember(admin, { realm, organization, who: found.id });
       return person(found as Member);
+    },
+    async join(organization, id) {
+      const found = await findPerson(admin, realm, id);
+      const added = await addMember(admin, { realm, organization, who: found.id });
+      return { person: await person(found as Member), added };
     },
     async remove(organization, id) {
       const org = await organizationByAlias(admin, realm, organization);

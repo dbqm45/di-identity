@@ -58,6 +58,7 @@ function fakeDirectory() {
     ['globex', [{ id: 'p-gx', name: 'Gx Person', email: 'gx@globex.test', roles: [] }]],
   ]);
   const known = new Map([['nowa@acme.test', { id: 'p-new', name: 'Nowa Osoba', email: 'nowa@acme.test', roles: [] as string[] }]]);
+  const byId = new Map([['p-join', { id: 'p-join', name: 'Zaproszona Osoba', email: '', roles: [] as string[] }]]);
   const agents = new Map<string, AgentView[]>([
     ['acme', [{ clientId: 'agent-tomasz-acme', owner: ADMIN_SUB, reviewBy: '2027-02-20', enabled: true }]],
     ['globex', [{ clientId: 'agent-x-globex', owner: 'p-gx', reviewBy: '2027-02-20', enabled: true }]],
@@ -71,6 +72,15 @@ function fakeDirectory() {
       people.get(org)!.push(p);
       return p;
     },
+    async join(org, id) {
+      const list = people.get(org)!;
+      const member = list.find((p) => p.id === id);
+      if (member) return { person: member, added: false };
+      const p = byId.get(id) ?? [...known.values()].find((x) => x.id === id);
+      if (!p) throw new Error('no such person in the suite');
+      list.push(p);
+      return { person: p, added: true };
+    },
     async remove(org, id) { people.set(org, people.get(org)!.filter((p) => p.id !== id)); },
     async grant(id, role) { const p = all().find((x) => x.id === id)!; if (!p.roles.includes(role)) p.roles.push(role); },
     async revoke(id, role) { const p = all().find((x) => x.id === id)!; p.roles = p.roles.filter((r) => r !== role); },
@@ -80,10 +90,10 @@ function fakeDirectory() {
   return { directory, people, agents };
 }
 
-function setup() {
+function setup(options: { now?: () => number } = {}) {
   const issuer = fakeIssuer();
   const dir = fakeDirectory();
-  const store = memoryAdminStore();
+  const store = memoryAdminStore(options.now);
   const app = buildApp({
     version: '0.0.0', eventsSecret: SECRET, vocabulary: loadVocabulary(), events: memoryEventStore(), checkDatabase: async () => {},
     verifier: createVerifier({ issuer: ISSUER, audience: 'di-identity', fetchJwks: async () => JWKS }),
@@ -91,7 +101,7 @@ function setup() {
   adminRoutes(app, {
     issuer: ISSUER, clientId: 'di-admin', clientSecret: 'dummy-admin-secret', publicUrl: PUBLIC,
     verifier: createVerifier({ issuer: ISSUER, audience: 'di-admin', fetchJwks: async () => JWKS }),
-    store, directory: dir.directory, products: PRODUCTS, fetchImpl: issuer.fetchImpl,
+    store, directory: dir.directory, products: PRODUCTS, fetchImpl: issuer.fetchImpl, ...(options.now ? { now: options.now } : {}),
   });
   return { app, issuer, store, ...dir };
 }
@@ -251,4 +261,101 @@ test('AC-09: sign-out ends the session; a forged callback gets none', async () =
   const out = await post(app, '/admin/logout', session!, { csrf });
   assert.equal(out.statusCode, 303);
   assert.equal((await app.inject({ url: '/admin/o/acme/people', headers: { cookie: session } })).statusCode, 302);
+});
+
+// --- AC1b.1: invitations by link (docs/plan-admin-console-ac1b.md) ---
+
+const JOIN_SUB = 'p-join';
+const personToken = (sub = JOIN_SUB, organization: string[] = [], roles: string[] = []) =>
+  token({ aud: ['di-admin'], azp: 'di-admin', sub, name: 'Zaproszona Osoba', organization, resource_access: { 'di-admin': { roles } } });
+
+async function invite(app: App, session: string, roles: string[], org = 'acme') {
+  // The form token of the session, from the admin's own organization's page (another one answers 404).
+  const csrf = csrfOf((await app.inject({ url: '/admin/o/acme/invitations', headers: { cookie: session } })).body);
+  const form = new URLSearchParams({ csrf });
+  for (const r of roles) form.append('role', r);
+  return app.inject({ method: 'POST', url: `/admin/o/${org}/invitations`, headers: { cookie: session, 'content-type': 'application/x-www-form-urlencoded', origin: PUBLIC }, payload: form.toString() });
+}
+const linkOf = (html: string) => new RegExp(`${PUBLIC}/admin/join/([\\w-]{40,})`).exec(html)?.[1] ?? '';
+
+/** The invited person opens the link, signs in through the suite and comes back. */
+async function join(app: App, issuer: ReturnType<typeof fakeIssuer>, link: string, as = personToken()) {
+  const open = await app.inject({ url: `/admin/join/${link}` });
+  if (open.statusCode !== 302) return open;
+  issuer.state.next = as;
+  const login = cookieOf(open.headers['set-cookie'], ADMIN_LOGIN_COOKIE) ?? '';
+  return app.inject({ url: `/admin/callback?${issuer.approve(String(open.headers.location))}`, headers: { cookie: login } });
+}
+
+test('AC-10: an admin creates an invitation with product roles; the link shows once and only its hash is stored', async () => {
+  const { app, issuer, store } = setup();
+  const { session } = await signIn(app, issuer);
+  const res = await invite(app, session!, ['di-release:viewer', 'di-release:editor']);
+  assert.equal(res.statusCode, 200, res.body);
+  const link = linkOf(res.body);
+  assert.ok(link, 'the page shows the link');
+  assert.ok(!JSON.stringify([...store.invitationsByHash.values()]).includes(link), 'the token itself is never stored');
+  const list = await app.inject({ url: '/admin/o/acme/invitations', headers: { cookie: session } });
+  assert.match(list.body, /di-release:editor, di-release:viewer/);
+  assert.match(list.body, /open/);
+  assert.ok(!list.body.includes(link), 'the list never shows the link again');
+  assert.equal((await invite(app, session!, ['di-release:owner'])).statusCode, 400);
+  assert.equal((await invite(app, session!, [])).statusCode, 400);
+  assert.equal((await invite(app, session!, ['di-release:viewer'], 'globex')).statusCode, 404);
+  assert.ok(store.events.some((e) => e.kind === 'invitation_created' && e.subject === 'di-release:editor, di-release:viewer'));
+});
+
+test('AC-11: the invited person signs in through the suite and joins with the roles; no console session for them', async () => {
+  const { app, issuer, people, store } = setup();
+  const { session } = await signIn(app, issuer);
+  const link = linkOf((await invite(app, session!, ['di-release:viewer'])).body);
+  const back = await join(app, issuer, link);
+  assert.equal(back.statusCode, 200, back.body);
+  assert.match(back.body, /You joined acme/);
+  assert.equal(cookieOf(back.headers['set-cookie'], ADMIN_SESSION_COOKIE), undefined);
+  assert.deepEqual(people.get('acme')!.find((p) => p.id === JOIN_SUB)?.roles, ['di-release:viewer']);
+  const accepted = store.events.find((e) => e.kind === 'invitation_accepted');
+  assert.equal(accepted?.actorSub, JOIN_SUB);
+  assert.equal(accepted?.subject, 'Zaproszona Osoba: di-release:viewer');
+});
+
+test('AC-12: a link works once, not after it expired or was revoked, and an unknown one is not found', async () => {
+  let clock = Date.now();
+  const { app, issuer } = setup({ now: () => clock });
+  const { session } = await signIn(app, issuer);
+  const used = linkOf((await invite(app, session!, ['di-release:viewer'])).body);
+  assert.equal((await join(app, issuer, used)).statusCode, 200);
+  assert.equal((await join(app, issuer, used, personToken('p-new'))).statusCode, 410);
+
+  const revoked = await invite(app, session!, ['di-release:viewer']);
+  const id = /data-invitation="([^"]+)"/.exec((await app.inject({ url: '/admin/o/acme/invitations', headers: { cookie: session } })).body)?.[1];
+  assert.ok(id);
+  const csrf = csrfOf(revoked.body);
+  assert.equal((await post(app, `/admin/o/acme/invitations/${id}/revoke`, session!, { csrf }, 'https://evil.example')).statusCode, 403);
+  assert.equal((await post(app, `/admin/o/acme/invitations/${id}/revoke`, session!, { csrf })).statusCode, 303);
+  assert.equal((await join(app, issuer, linkOf(revoked.body))).statusCode, 410);
+
+  const late = linkOf((await invite(app, session!, ['di-release:viewer'])).body);
+  clock += 8 * 24 * 3600 * 1000;
+  assert.equal((await join(app, issuer, late)).statusCode, 410);
+  assert.equal((await app.inject({ url: `/admin/join/${'x'.repeat(43)}` })).statusCode, 404);
+});
+
+test('AC-13: a member who joins again only gets the missing roles and loses none', async () => {
+  const { app, issuer, people } = setup();
+  const { session } = await signIn(app, issuer);
+  const link = linkOf((await invite(app, session!, ['di-release:viewer'])).body);
+  assert.equal((await join(app, issuer, link, personToken('p-ola', ['acme']))).statusCode, 200);
+  assert.deepEqual(people.get('acme')!.find((p) => p.id === 'p-ola')?.roles.sort(), ['di-release:editor', 'di-release:viewer']);
+});
+
+test('AC-14: an agent cannot take an invitation, and the invitation stays open', async () => {
+  const { app, issuer, people } = setup();
+  const { session } = await signIn(app, issuer);
+  const link = linkOf((await invite(app, session!, ['di-release:viewer'])).body);
+  const agent = token({ aud: ['di-admin'], azp: 'agent-x-acme', sub: 'agent-sub', kind: 'agent', owner: ADMIN_SUB, organization: ['acme'] });
+  const res = await join(app, issuer, link, agent);
+  assert.equal(res.statusCode, 403, res.body);
+  assert.equal(people.get('acme')!.some((p) => p.id === 'agent-sub'), false);
+  assert.equal((await join(app, issuer, link)).statusCode, 200, 'still open for a person');
 });

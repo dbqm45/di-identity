@@ -1,5 +1,5 @@
 import type { AgentView, Person } from './directory.ts';
-import type { AdminEvent, AdminSession } from './store.ts';
+import type { AdminEvent, AdminSession, Invitation } from './store.ts';
 
 /**
  * Pages of the admin console: plain HTML from the server, no script (the CSP allows none), forms posting back with the
@@ -19,7 +19,7 @@ td,th{border-bottom:1px solid #e5e9ef;padding:8px;text-align:left;vertical-align
 interface PageContext {
   session: AdminSession;
   org: string;
-  section: 'people' | 'agents' | 'log';
+  section: 'people' | 'invitations' | 'agents' | 'log';
 }
 
 const csrfField = (csrf: string) => `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
@@ -33,7 +33,7 @@ export function page(ctx: PageContext, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Admin Console · ${escape(ctx.org)}</title><style>${STYLE}</style></head><body>
 <header><strong>DI Admin Console</strong><span>${escape(ctx.org)}${orgs}</span>
-<nav>${link('people', 'People')}${link('agents', 'Agents')}${link('log', 'Change log')}</nav>
+<nav>${link('people', 'People')}${link('invitations', 'Invitations')}${link('agents', 'Agents')}${link('log', 'Change log')}</nav>
 <span class="muted">${escape(ctx.session.name)}</span>
 <form class="inline" method="post" action="/admin/logout">${csrfField(ctx.session.csrf)}<button type="submit">Sign out</button></form></header>
 <main>${body}</main></body></html>`;
@@ -67,6 +67,38 @@ export function agentsBody(org: string, agents: AgentView[], csrf: string): stri
 <form method="post" action="${base}/disable-all">${csrfField(csrf)}<button type="submit">Turn off every agent of ${escape(org)}</button>
 <span class="muted">New tokens stop at once; issued ones expire within minutes.</span></form>
 <table><thead><tr><th>Agent</th><th>State</th><th>Owner</th><th>Review by</th><th></th></tr></thead><tbody>${rows.join('') || '<tr><td colspan="5" class="muted">No agents.</td></tr>'}</tbody></table>`;
+}
+
+const day = (d: Date | null) => (d ? escape(d.toISOString().slice(0, 10)) : '');
+
+/** Invitations by link (docs/plan-admin-console-ac1b.md): a new one with product roles, the list, revoking. */
+export function invitationsBody(org: string, invitations: Invitation[], products: Record<string, string[]>, csrf: string, now: Date, created?: string): string {
+  const base = `/admin/o/${escape(org)}/invitations`;
+  const options = Object.entries(products).flatMap(([client, roles]) => roles.map((r) => `${client}:${r}`));
+  const shown = created
+    ? `<p><strong>Send this link to the person you invite.</strong> It is shown only now, works once and for 7 days:</p>
+<p><input type="text" readonly size="90" value="${escape(created)}"></p>`
+    : '';
+  const stateOf = (i: Invitation) => (i.usedAt ? `used ${day(i.usedAt)}` : i.revokedAt ? `revoked ${day(i.revokedAt)}` : i.expiresAt <= now ? 'expired' : 'open');
+  const rows = invitations.map((i) => {
+    const state = stateOf(i);
+    const revoke = state === 'open'
+      ? `<form class="inline" method="post" action="${base}/${escape(i.id)}/revoke" data-invitation="${escape(i.id)}">${csrfField(csrf)}<button type="submit">Revoke</button></form>`
+      : '';
+    return `<tr><td>${escape(i.roles.join(', '))}</td><td>${escape(i.createdByName)}<br><span class="muted">${day(i.createdAt)}, until ${day(i.expiresAt)}</span></td><td>${escape(state)}</td><td>${revoke}</td></tr>`;
+  });
+  return `<h1>Invitations</h1>${shown}
+<form method="post" action="${base}">${csrfField(csrf)}<fieldset><legend>Product roles for the person you invite</legend>${
+    options.map((o) => `<label class="role"><input type="checkbox" name="role" value="${escape(o)}"> ${escape(o)}</label>`).join(' ')}</fieldset>
+<button type="submit">Create an invitation link</button> <span class="muted">They sign in with the suite (Google or your organization's sign-in), never with a password.</span></form>
+<table><thead><tr><th>Roles</th><th>Created by</th><th>State</th><th></th></tr></thead><tbody>${rows.join('') || '<tr><td colspan="4" class="muted">No invitations yet.</td></tr>'}</tbody></table>`;
+}
+
+/** What the invited person sees after joining. */
+export function joinedPage(org: string, roles: string[]): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Joined ${escape(org)}</title><style>${STYLE}</style></head>
+<body><main><h1>You joined ${escape(org)}</h1><p>Your roles: ${roles.map((r) => `<span class="role">${escape(r)}</span>`).join('') || '<span class="muted">none new</span>'}.</p>
+<p class="muted">Open the suite's applications as usual; they see the new roles at your next sign-in.</p></main></body></html>`;
 }
 
 export function logBody(events: AdminEvent[]): string {
