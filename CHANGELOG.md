@@ -2,6 +2,12 @@
 
 Notable changes, newest first. Entries are written by `npm run release` from Conventional Commits (RELEASING.md).
 
+## [0.1.5] - 2026-11-25
+
+### Added
+
+- **admin:** add the admin console for people, product roles and agents (#8)
+
 ## [0.1.4] - 2026-11-25
 
 ### Fixed
