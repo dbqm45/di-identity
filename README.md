@@ -81,6 +81,25 @@ Agent zaproszenia nie przyjmie. W dzienniku są `invitation_created`, `invitatio
 ścieżką konsoli Keycloak. Konsola i linki zaproszeń działają więc lokalnie albo przez tunel, dopóki hosting nie
 dostanie dla nich osobnej domeny.
 
+### Logowanie przez dostawcę organizacji (AC1b.2)
+
+Strona **Sign-in** ([plan](docs/plan-admin-console-ac1b.md)): admin organizacji podaje swojego dostawcę OpenID Connect,
+czyli wystawcę, identyfikator i sekret klienta, i wybiera jedną z domen organizacji. Konsola tworzy w Keycloaku
+dostawcę `org-<alias>`, powiązanego z organizacją i tą domeną. Przy logowaniu najpierw po nazwie osoby z tej domeny
+trafiają do niego. Dostawca jest ustawiony tak:
+- `trustEmail: false`;
+- pierwsze logowanie przepływem `first broker login - create only`, który tylko tworzy nowe konto i czyni je
+  członkiem organizacji, a nigdy nie łączy z istniejącym. Przepływ zakłada `configure`;
+- nazwa użytkownika z `sub` dostawcy (DI3);
+- ukryty na stronie logowania, z PKCE.
+
+Konto, które już istnieje, na przykład z Google, dalej loguje się po swojemu. Role nadaje nadal konsola, a nie
+dostawca. Sekret zostaje tylko w Keycloaku: konsola go nie zapisuje, nie pokazuje i nie wpisuje do dziennika. Pusty
+sekret przy zmianie zostawia zapisany. Adres wystawcy musi być https i wskazywać tylko adresy publiczne. Konsola na
+localhost dopuszcza dostawcę na localhost po http, np. drugi realm. Metadane pobiera bez przekierowań, z limitem czasu
+i rozmiaru (`src/admin/discovery.ts`). Konto usługowe potrzebuje do tego jeszcze `view-identity-providers` i
+`manage-identity-providers`, bo samo `manage-realm` dostaje 403. Na razie tylko OIDC, SAML osobno.
+
 ## Polecenia
 
 Uruchamiane na maszynie z Keycloak, wobec adresu wewnętrznego (`KEYCLOAK_URL`); w compose przez usługę `admin`:

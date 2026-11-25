@@ -8,7 +8,8 @@ import { memoryEventStore } from '../src/events/store.ts';
 import { loadVocabulary } from '../src/events/envelope.ts';
 import { peopleRoutes } from '../src/people-api.ts';
 import { createAgent, createOrganization, disableOrganizationAgents, listAgents, organizationByAlias, setAgentEnabled } from '../src/keycloak/agents.ts';
-import { configure, loadSuite } from '../src/keycloak/configure.ts';
+import { configure, loadSuite, CREATE_ONLY_FLOW } from '../src/keycloak/configure.ts';
+import { getOrgProvider, removeOrgProvider, setOrgProvider } from '../src/keycloak/org-provider.ts';
 import { addMember, grantRole, lookupByEmail, revokeRole } from '../src/keycloak/people.ts';
 import { clientSecrets, secretVariable } from '../src/keycloak/secrets.ts';
 
@@ -213,6 +214,53 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     assert.ok((await listAgents(service, suite.realm, run)).some((a) => a.clientId === agent.clientId));
     await setAgentEnabled(service, suite.realm, agent.clientId, false);
     await setAgentEnabled(service, suite.realm, agent.clientId, true);
+  });
+
+  // AC1b.2 (docs/plan-admin-console-ac1b.md): the organization's own OIDC provider, set up with the service account.
+  await t.test("an organization's own OIDC provider is linked to it and never links accounts by e-mail", async () => {
+    const cust = `${suite.realm}-cust`;
+    await admin.call('POST', '', { realm: cust, enabled: true });
+    t.after(() => admin.call('DELETE', `/${cust}`));
+    const custIssuer = `${url}/realms/${cust}`;
+    const secrets = await clientSecrets(admin, suite);
+    const service = keycloakServiceAdmin({ url: url!, realm: suite.realm, clientId: 'di-identity', clientSecret: secrets.get(secretVariable('di-identity'))! });
+    const discover = async (issuer: string) => (await fetch(`${issuer}/.well-known/openid-configuration`)).json() as Promise<Record<string, unknown>>;
+    const input = { realm: suite.realm, organization: run, issuer: custIssuer, clientId: 'suite-broker', domain: `${run}.test`, discover };
+
+    await assert.rejects(setOrgProvider(service, { ...input }), /secret/, 'the first setup needs the secret');
+    await setOrgProvider(service, { ...input, clientSecret: 'test-only-secret' });
+    assert.deepEqual(await getOrgProvider(service, suite.realm, run), { alias: `org-${run}`, issuer: custIssuer, clientId: 'suite-broker', domain: `${run}.test` });
+
+    const idp = await admin.call<Record<string, unknown> & { config: Record<string, string> }>('GET', `${R}/identity-provider/instances/org-${run}`);
+    assert.equal(idp.trustEmail, false);
+    assert.equal(idp.hideOnLogin, true);
+    assert.equal(idp.storeToken, false);
+    assert.equal(idp.firstBrokerLoginFlowAlias, CREATE_ONLY_FLOW);
+    assert.equal(idp.config['kc.org.domain'], `${run}.test`);
+    assert.equal(idp.config['kc.org.broker.redirect.mode.email-matches'], 'true');
+    assert.equal(idp.config.syncMode, 'FORCE');
+    assert.equal(idp.config.pkceEnabled, 'true');
+    assert.equal(idp.config.authorizationUrl, `${custIssuer}/protocol/openid-connect/auth`);
+    assert.notEqual(idp.config.clientSecret, 'test-only-secret', 'Keycloak never gives the secret back');
+    const org = await organizationByAlias(admin, suite.realm, run);
+    const linked = await admin.call<{ alias: string }[]>('GET', `${R}/organizations/${org.id}/identity-providers`);
+    assert.deepEqual(linked.map((l) => l.alias), [`org-${run}`]);
+    const mappers = await admin.call<{ identityProviderMapper: string; config: Record<string, string> }[]>('GET', `${R}/identity-provider/instances/org-${run}/mappers`);
+    assert.deepEqual(mappers.map((m) => [m.identityProviderMapper, m.config.template]), [['oidc-username-idp-mapper', '${ALIAS}.${CLAIM.sub}']]);
+    // The first sign-in only creates a new user and makes them a member: nothing that links an existing account.
+    const flow = await admin.call<{ providerId: string; requirement: string }[]>('GET', `${R}/authentication/flows/${encodeURIComponent(CREATE_ONLY_FLOW)}/executions`);
+    assert.deepEqual(flow.map((e) => [e.providerId, e.requirement]), [
+      ['idp-review-profile', 'REQUIRED'], ['idp-create-user-if-unique', 'REQUIRED'], ['idp-add-organization-member', 'REQUIRED'],
+    ]);
+
+    // An update without the secret keeps it; another client id is taken.
+    await setOrgProvider(service, { ...input, clientId: 'suite-broker-2' });
+    assert.equal((await getOrgProvider(service, suite.realm, run))?.clientId, 'suite-broker-2');
+    await assert.rejects(setOrgProvider(service, { ...input, domain: 'not-theirs.test' }), /domain/);
+
+    assert.equal(await removeOrgProvider(service, suite.realm, run), true);
+    assert.equal(await getOrgProvider(service, suite.realm, run), null);
+    assert.equal(await removeOrgProvider(service, suite.realm, run), false);
   });
 
   await t.test('DI Channels finds the person by verified e-mail through the di-identity API', async () => {

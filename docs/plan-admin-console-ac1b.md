@@ -1,6 +1,6 @@
 # Admin Console, etap AC1b — zaproszenia i dostawca tożsamości klienta — plan
 
-Stan: 2026-11-25, decyzje 1–5 przyjęte przez właściciela; AC1b.1 zrobione (zaproszenia), AC1b.2 czeka. Ciąg dalszy [AC1](plan-admin-console.md) (decyzja 4:
+Stan: 2026-11-25, decyzje 1–5 przyjęte przez właściciela; AC1b.1 zrobione (zaproszenia, #11), AC1b.2 zrobione (dostawca organizacji). Ciąg dalszy [AC1](plan-admin-console.md) (decyzja 4:
 „poza tym krokiem, każde osobno”). Źródło zakresu: `dbqm45/pdi` `docs/plan-budowy-suity.md` §2b (AC1: zaproszenia,
 podłączenie dostawcy tożsamości klienta) i ADR 17 (DI1: bez własnej bazy haseł, DI2: Google najpierw, DI3: bez
 e-maila poza klientami z `email: true`).
@@ -74,3 +74,23 @@ e-maila poza klientami z `email: true`).
 - **Do hostingu:** `Caddyfile` blokuje z zewnątrz całe `/admin`, bo to też ścieżka konsoli Keycloak. Konsola i linki
   zaproszeń potrzebują więc osobnej domeny albo innej ścieżki, z blokadą `/admin` tylko dla Keycloak. To osobna
   decyzja przy wdrożeniu.
+
+## Co wyszło przy wdrożeniu AC1b.2 (2026-11-25, Keycloak 26.4.7)
+
+- **Decyzja 4:** samo `manage-realm` nie wystarcza. API dostawców tożsamości odpowiada kontu usługowemu `403`, więc
+  dochodzą `view-identity-providers` i `manage-identity-providers`. Wiązanie dostawcy z organizacją działa już z
+  `manage-realm`.
+- **Konfiguracja z dystrybucji:** `kc.org.domain`, `kc.org.broker.redirect.mode.email-matches` i krok
+  `idp-add-organization-member`. Przepływ `first broker login - create only` ma trzy kroki: `idp-review-profile`,
+  `idp-create-user-if-unique` i `idp-add-organization-member`, każdy `REQUIRED`. Zakłada go `configure`, bo to stan
+  realmu.
+- **Na żywo** (realm `suite`, dostawca klienta jako realm `acme-idp`, domena `acme.com` z `verified: false`):
+  - przekierowanie po domenie działa także dla niezweryfikowanej domeny;
+  - nowa osoba z linku zaproszenia zalogowała się u dostawcy i dołączyła jako `org-acme.<sub>`;
+  - dla adresu, który ma już konto (`ola.test@acme.com`), Keycloak proponuje to konto, a nie dostawcę. Do konta nic
+    się nie dowiązało;
+  - gdy dostawca zwraca adres istniejącego konta, logowanie kończy się odmową („User with email … already exists”),
+    sprawdzone w osobnym realmie;
+  - po zapisie bez sekretu następna osoba zalogowała się, więc zamaskowany sekret Keycloak zachowuje.
+- Strona pokazuje adres przekierowania, który admin rejestruje u swojego dostawcy:
+  `<wystawca suity>/broker/org-<alias>/endpoint`.

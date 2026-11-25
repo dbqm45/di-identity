@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { adminRoutes, ADMIN_SESSION_COOKIE, ADMIN_LOGIN_COOKIE } from '../src/admin/routes.ts';
-import type { Directory, Person, AgentView } from '../src/admin/directory.ts';
+import { DirectoryError, type Directory, type Person, type AgentView } from '../src/admin/directory.ts';
 import { memoryAdminStore } from '../src/admin/store.ts';
 import { buildApp } from '../src/app.ts';
 import { createVerifier } from '../src/auth/oidc.ts';
@@ -64,6 +64,8 @@ function fakeDirectory() {
     ['globex', [{ clientId: 'agent-x-globex', owner: 'p-gx', reviewBy: '2027-02-20', enabled: true }]],
   ]);
   const all = () => [...people.values()].flat();
+  const domains = new Map([['acme', ['acme.test']], ['globex', ['globex.test']]]);
+  const providers = new Map<string, { alias: string; issuer: string; clientId: string; domain: string; secret: string }>();
   const directory: Directory = {
     async people(org) { return structuredClone(people.get(org) ?? []); },
     async add(org, email) {
@@ -85,9 +87,23 @@ function fakeDirectory() {
     async grant(id, role) { const p = all().find((x) => x.id === id)!; if (!p.roles.includes(role)) p.roles.push(role); },
     async revoke(id, role) { const p = all().find((x) => x.id === id)!; p.roles = p.roles.filter((r) => r !== role); },
     async agents(org) { return structuredClone(agents.get(org) ?? []); },
+    async domains(org) { return domains.get(org) ?? []; },
+    async provider(org) {
+      const p = providers.get(org);
+      return p ? { alias: p.alias, issuer: p.issuer, clientId: p.clientId, domain: p.domain } : null;
+    },
+    async setProvider(org, input) {
+      if (!domains.get(org)?.includes(input.domain)) throw new DirectoryError(`the domain ${input.domain} is not one of the organization's domains`);
+      const had = providers.get(org);
+      if (!had && !input.clientSecret) throw new DirectoryError('the client secret is needed to set up the provider');
+      const p = { alias: `org-${org}`, issuer: input.issuer, clientId: input.clientId, domain: input.domain, secret: input.clientSecret ?? had!.secret };
+      providers.set(org, p);
+      return { alias: p.alias, issuer: p.issuer, clientId: p.clientId, domain: p.domain };
+    },
+    async removeProvider(org) { return providers.delete(org); },
     async setAgent(clientId, enabled) { for (const list of agents.values()) for (const a of list) if (a.clientId === clientId) a.enabled = enabled; },
   };
-  return { directory, people, agents };
+  return { directory, people, agents, providers };
 }
 
 function setup(options: { now?: () => number } = {}) {
@@ -358,4 +374,59 @@ test('AC-14: an agent cannot take an invitation, and the invitation stays open',
   assert.equal(res.statusCode, 403, res.body);
   assert.equal(people.get('acme')!.some((p) => p.id === 'agent-sub'), false);
   assert.equal((await join(app, issuer, link)).statusCode, 200, 'still open for a person');
+});
+
+// --- AC1b.2: the organization's own OIDC provider (docs/plan-admin-console-ac1b.md) ---
+
+test("AC-15: an admin sets the organization's own provider: the secret never shows again, and it is logged", async () => {
+  const { app, issuer, store, providers } = setup();
+  const { session } = await signIn(app, issuer);
+  const empty = await app.inject({ url: '/admin/o/acme/sign-in', headers: { cookie: session } });
+  assert.equal(empty.statusCode, 200);
+  assert.match(empty.body, /No sign-in of your own yet/);
+  assert.match(empty.body, /<option>acme\.test<\/option>/);
+  assert.ok(empty.body.includes(`${ISSUER}/broker/org-acme/endpoint`), 'the redirect address to register at the provider');
+  const csrf = csrfOf(empty.body);
+  const form = { csrf, issuer: 'https://login.acme.example/realms/acme', clientId: 'suite', clientSecret: 'very-secret-value', domain: 'acme.test' };
+  const set = await post(app, '/admin/o/acme/sign-in', session!, form);
+  assert.equal(set.statusCode, 303, set.body);
+  assert.equal(providers.get('acme')?.secret, 'very-secret-value');
+  const shown = await app.inject({ url: '/admin/o/acme/sign-in', headers: { cookie: session } });
+  assert.match(shown.body, /https:\/\/login\.acme\.example\/realms\/acme/);
+  assert.match(shown.body, /type="password"/);
+  assert.ok(!shown.body.includes('very-secret-value'), 'the secret is never shown');
+  assert.ok(!JSON.stringify(store.events).includes('very-secret-value'), 'nor logged');
+  assert.ok(store.events.some((e) => e.kind === 'provider_set' && e.subject === 'https://login.acme.example/realms/acme (acme.test)'));
+  // An update without the secret keeps it.
+  assert.equal((await post(app, '/admin/o/acme/sign-in', session!, { ...form, clientSecret: '', clientId: 'suite-2' })).statusCode, 303);
+  assert.equal(providers.get('acme')?.secret, 'very-secret-value');
+  assert.equal(providers.get('acme')?.clientId, 'suite-2');
+});
+
+test('AC-16: the provider form refuses a plain-http issuer, a domain that is not the organization\'s, and a first setup without the secret', async () => {
+  const { app, issuer, providers } = setup();
+  const { session } = await signIn(app, issuer);
+  const csrf = csrfOf((await app.inject({ url: '/admin/o/acme/sign-in', headers: { cookie: session } })).body);
+  const form = { csrf, issuer: 'https://login.acme.example', clientId: 'suite', clientSecret: 's', domain: 'acme.test' };
+  assert.equal((await post(app, '/admin/o/acme/sign-in', session!, { ...form, issuer: 'http://login.acme.example' })).statusCode, 400);
+  assert.equal((await post(app, '/admin/o/acme/sign-in', session!, { ...form, issuer: 'https://user:pw@login.acme.example' })).statusCode, 400);
+  assert.equal((await post(app, '/admin/o/acme/sign-in', session!, { ...form, clientId: '' })).statusCode, 400);
+  const wrong = await post(app, '/admin/o/acme/sign-in', session!, { ...form, domain: 'globex.test' });
+  assert.equal(wrong.statusCode, 409);
+  assert.match(wrong.body, /not one of the organization/);
+  assert.equal((await post(app, '/admin/o/acme/sign-in', session!, { ...form, clientSecret: '' })).statusCode, 409);
+  assert.equal(providers.size, 0);
+});
+
+test('AC-17: removing the provider is logged; another organization is not there; changes need the form token', async () => {
+  const { app, issuer, store, providers } = setup();
+  const { session } = await signIn(app, issuer);
+  const csrf = csrfOf((await app.inject({ url: '/admin/o/acme/sign-in', headers: { cookie: session } })).body);
+  await post(app, '/admin/o/acme/sign-in', session!, { csrf, issuer: 'https://login.acme.example', clientId: 'suite', clientSecret: 's', domain: 'acme.test' });
+  assert.equal((await post(app, '/admin/o/acme/sign-in/remove', session!, { csrf: 'forged' })).statusCode, 403);
+  assert.equal((await post(app, '/admin/o/globex/sign-in/remove', session!, { csrf })).statusCode, 404);
+  assert.equal((await app.inject({ url: '/admin/o/globex/sign-in', headers: { cookie: session } })).statusCode, 404);
+  assert.equal((await post(app, '/admin/o/acme/sign-in/remove', session!, { csrf })).statusCode, 303);
+  assert.equal(providers.size, 0);
+  assert.ok(store.events.some((e) => e.kind === 'provider_removed'));
 });
