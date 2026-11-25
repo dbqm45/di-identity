@@ -95,8 +95,9 @@ curl http://127.0.0.1:3200/health
 Adres `127.0.0.1` zamiast `localhost`: na macOS `localhost` trafia najpierw w IPv6 (`::1`), a usługa słucha tylko na
 `127.0.0.1`. Inna aplikacja słuchająca na tym samym porcie pod `::1` odpowie wtedy zamiast niej.
 
-Test na Keycloak tworzy własną organizację, osobę z hasłem i publicznego klienta testowego: tylko w teście, realm
-`suite` nie ma logowania hasłem.
+Test na Keycloak pracuje na własnym realmie `suite-test-<przebieg>` z definicją z `keycloak/suite.json` i usuwa go na
+koniec, więc lokalny realm `suite` (adresy przekierowań, organizacje, osoby) zostaje nietknięty. Tworzy w nim
+organizację, osobę z hasłem i publicznego klienta testowego: tylko w teście, realm `suite` nie ma logowania hasłem.
 
 ## Wdrożenie (Hetzner Cloud)
 
