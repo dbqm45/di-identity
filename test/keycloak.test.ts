@@ -15,11 +15,13 @@ import { clientSecrets, secretVariable } from '../src/keycloak/secrets.ts';
 // Against a real Keycloak 26 when KEYCLOAK_URL is set (CI starts one; locally: docker run, see README.md).
 const url = process.env.KEYCLOAK_URL;
 const skip = !url && 'KEYCLOAK_URL is not set';
-const suite = loadSuite();
+const run = `t${Date.now().toString(36)}`;
+// The suite's realm definition in a realm of its own for each run, deleted afterwards: a developer's Keycloak keeps
+// its realm `suite` (with their redirect addresses, organizations and people) untouched.
+const suite = { ...loadSuite(), realm: `suite-test-${run}` };
 const issuer = `${url}/realms/${suite.realm}`;
 const admin = keycloakAdmin({ url: url ?? 'http://localhost', username: process.env.KEYCLOAK_ADMIN_USERNAME ?? 'admin', password: process.env.KEYCLOAK_ADMIN_PASSWORD ?? 'admin' });
 const R = `/${suite.realm}`;
-const run = `t${Date.now().toString(36)}`;
 
 const tokenRequest = (form: Record<string, string>) =>
   fetch(`${issuer}/protocol/openid-connect/token`, { method: 'POST', body: new URLSearchParams(form) }).then(async (r) => ({ status: r.status, body: (await r.json()) as Record<string, unknown> }));
@@ -39,7 +41,22 @@ const agentToken = (clientId: string, key: KeyObject, kid: string) =>
     client_assertion: agentAssertion(clientId, key, kid),
   });
 
+/** Redirect addresses of a product client in the shared realm `suite`, or null when that realm does not exist yet. */
+async function sharedRedirects(clientId: string): Promise<string[] | null> {
+  const realms = await admin.call<{ realm: string }[]>('GET', '');
+  if (!realms.some((r) => r.realm === 'suite')) return null;
+  const [c] = await admin.call<{ redirectUris?: string[] }[]>('GET', `/suite/clients?clientId=${clientId}`);
+  return c?.redirectUris ?? [];
+}
+
 test('the suite realm on a real Keycloak: people, organizations, product roles and agents', { skip }, async (t) => {
+  // A developer's local Keycloak holds the realm `suite` with their redirect addresses; the test must not touch it.
+  const before = await sharedRedirects('di-release-control');
+  t.after(async () => {
+    await admin.call('DELETE', R);
+    assert.deepEqual(await sharedRedirects('di-release-control'), before, 'the test changed the shared realm suite');
+  });
+
   await t.test('configure is idempotent and keeps email to DI3 clients', async () => {
     await configure(admin, suite, {});
     await configure(admin, suite, {});
