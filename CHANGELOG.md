@@ -2,6 +2,12 @@
 
 Notable changes, newest first. Entries are written by `npm run release` from Conventional Commits (RELEASING.md).
 
+## [0.1.7] - 2026-11-25
+
+### Added
+
+- **keycloak:** allow offline_access for the MCP client with short sessions (#10)
+
 ## [0.1.6] - 2026-11-25
 
 ### Added
