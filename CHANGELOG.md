@@ -2,6 +2,12 @@
 
 Notable changes, newest first. Entries are written by `npm run release` from Conventional Commits (RELEASING.md).
 
+## [0.1.8] - 2026-11-25
+
+### Added
+
+- **admin:** invite people to an organization by link (#11)
+
 ## [0.1.7] - 2026-11-25
 
 ### Added
