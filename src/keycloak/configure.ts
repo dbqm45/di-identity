@@ -29,6 +29,8 @@ export interface SuitePublicClient {
   name: string;
   audience: string;
   redirectUris: string[];
+  /** Allows `offline_access` for this client only, with its own offline session limits. */
+  offlineSession?: { idleSeconds: number; maxSeconds: number; why?: string };
   why?: string;
 }
 
@@ -110,6 +112,8 @@ export async function configure(admin: Admin, suite: SuiteConfig, env: NodeJS.Pr
     sslRequired: 'external',
     bruteForceProtected: true,
     accessTokenLifespan: suite.personTokenSeconds,
+    // Without it Keycloak ignores every offline session maximum, also a client's own (public clients, offline_access).
+    offlineSessionMaxLifespanEnabled: true,
   };
   try {
     await admin.call('GET', R);
@@ -230,7 +234,16 @@ export async function configure(admin: Admin, suite: SuiteConfig, env: NodeJS.Pr
       fullScopeAllowed: false,
       redirectUris: redirects,
       webOrigins: [],
-      attributes: { 'pkce.code.challenge.method': 'S256', 'post.logout.redirect.uris': '' },
+      attributes: {
+        'pkce.code.challenge.method': 'S256',
+        'post.logout.redirect.uris': '',
+        ...(c.offlineSession
+          ? {
+              'client.offline.session.idle.timeout': String(c.offlineSession.idleSeconds),
+              'client.offline.session.max.lifespan': String(c.offlineSession.maxSeconds),
+            }
+          : {}),
+      },
     };
     const found = await admin.call<Named[]>('GET', `${R}/clients?clientId=${encodeURIComponent(c.clientId)}`);
     let id = found[0]?.id;
@@ -257,12 +270,18 @@ export async function configure(admin: Admin, suite: SuiteConfig, env: NodeJS.Pr
       if (!sid) throw new Error(`client scope ${name} does not exist in realm ${suite.realm}`);
       if (!have.some((s) => s.name === name)) await admin.call('PUT', `${R}/clients/${id}/default-client-scopes/${sid}`);
     }
-    // No optional scopes at all: a client asking for `offline_access` (MCP clients add it, SEP-2207) would get an offline
-    // token that outlives the session on a laptop; `phone`, `address` and the like are not for products (DI3).
-    for (const s of await admin.call<Named[]>('GET', `${R}/clients/${id}/optional-client-scopes`)) {
-      await admin.call('DELETE', `${R}/clients/${id}/optional-client-scopes/${s.id}`);
+    // Optional scopes: only `offline_access`, and only with `offlineSession` (MCP clients ask for it, SEP-2207); its
+    // offline session ends by the limits above. `phone`, `address` and the other realm defaults are not for products (DI3).
+    const wantOptional = new Set(c.offlineSession ? ['offline_access'] : []);
+    const haveOptional = await admin.call<Named[]>('GET', `${R}/clients/${id}/optional-client-scopes`);
+    for (const s of haveOptional) if (!wantOptional.has(s.name ?? '')) await admin.call('DELETE', `${R}/clients/${id}/optional-client-scopes/${s.id}`);
+    for (const name of wantOptional) {
+      const sid = scopeIds.get(name);
+      if (!sid) throw new Error(`client scope ${name} does not exist in realm ${suite.realm}`);
+      if (!haveOptional.some((s) => s.name === name)) await admin.call('PUT', `${R}/clients/${id}/optional-client-scopes/${sid}`);
     }
-    log(`public client ${c.clientId}: ${found.length ? 'updated' : 'created'} (for ${c.audience}, PKCE, no email, no optional scopes)`);
+    const offline = c.offlineSession ? `offline_access for ${c.offlineSession.idleSeconds / 3600} h idle, ${c.offlineSession.maxSeconds / 86400} days at most` : 'no offline_access';
+    log(`public client ${c.clientId}: ${found.length ? 'updated' : 'created'} (for ${c.audience}, PKCE, no email, ${offline})`);
   }
 
   // Identity providers (Google first, DI2); skipped until the client id and secret are set.

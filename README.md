@@ -11,7 +11,7 @@ produktów jako role klientów i agenci jako osobne podmioty z właścicielem (D
 | Część | Pliki | Co robi |
 |---|---|---|
 | Stan realmu | `keycloak/suite.json` | aplikacje suity (klienci OIDC) z rolami, które dostają e-mail (DI3), czas życia tokenów osoby (5 min) i agenta (10 min), dostawcy tożsamości |
-| Klienci publiczni | `keycloak/suite.json` (`publicClients`) | narzędzia logujące osobę na jej komputerze, bez sekretu, z PKCE: `di-decision-mcp` dla zdalnego serwera MCP pdi (Claude Code, port zwrotny 33418); token tylko z rolami i odbiorcą `di-decision`, bez e-maila; zamiast dynamicznej rejestracji klientów |
+| Klienci publiczni | `keycloak/suite.json` (`publicClients`) | narzędzia logujące osobę na jej komputerze, bez sekretu, z PKCE: `di-decision-mcp` dla zdalnego serwera MCP pdi (Claude Code, port zwrotny 33418); token tylko z rolami i odbiorcą `di-decision`, bez e-maila; jedyny zakres opcjonalny to `offline_access` (klienci MCP o niego proszą), z sesją offline do 24 h bez użycia i najwyżej 14 dni; zamiast dynamicznej rejestracji klientów |
 | Konfiguracja | `src/keycloak/configure.ts` | doprowadza Keycloak do stanu z `suite.json`; można uruchamiać wielokrotnie; nie usuwa organizacji, osób ani agentów |
 | Agenci i organizacje | `src/keycloak/agents.ts` | organizacja z domeną; agent: klient `agent-<persona>-<organizacja>` z kontem usługowym, właścicielem, celem, datą przeglądu (90 dni), `private_key_jwt`, rolami (nigdy `admin`); wyłączenie agenta i wszystkich agentów organizacji (AN6) |
 | Osoby | `src/keycloak/people.ts` | dodanie osoby do organizacji i nadanie albo odebranie roli w produkcie (po e-mailu, nazwie użytkownika albo `sub`); odmawia dla agentów |
