@@ -257,7 +257,12 @@ export async function configure(admin: Admin, suite: SuiteConfig, env: NodeJS.Pr
       if (!sid) throw new Error(`client scope ${name} does not exist in realm ${suite.realm}`);
       if (!have.some((s) => s.name === name)) await admin.call('PUT', `${R}/clients/${id}/default-client-scopes/${sid}`);
     }
-    log(`public client ${c.clientId}: ${found.length ? 'updated' : 'created'} (for ${c.audience}, PKCE, no email)`);
+    // No optional scopes at all: a client asking for `offline_access` (MCP clients add it, SEP-2207) would get an offline
+    // token that outlives the session on a laptop; `phone`, `address` and the like are not for products (DI3).
+    for (const s of await admin.call<Named[]>('GET', `${R}/clients/${id}/optional-client-scopes`)) {
+      await admin.call('DELETE', `${R}/clients/${id}/optional-client-scopes/${s.id}`);
+    }
+    log(`public client ${c.clientId}: ${found.length ? 'updated' : 'created'} (for ${c.audience}, PKCE, no email, no optional scopes)`);
   }
 
   // Identity providers (Google first, DI2); skipped until the client id and secret are set.

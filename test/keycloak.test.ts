@@ -143,6 +143,8 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     assert.deepEqual([...(c.redirectUris as string[])].sort(), ['http://127.0.0.1:33418/callback', 'http://localhost:33418/callback']);
     const scopes = (await admin.call<{ name: string }[]>('GET', `${R}/clients/${c.id}/default-client-scopes`)).map((s) => s.name);
     assert.ok(!scopes.includes('email'));
+    const optional = await admin.call<{ name: string }[]>('GET', `${R}/clients/${c.id}/optional-client-scopes`);
+    assert.deepEqual(optional.map((s) => s.name), [], 'no offline_access, phone, address or other optional scope');
 
     await grantRole(admin, { realm: suite.realm, who: person, role: 'di-decision:viewer' });
     const claims = await admin.call<Record<string, unknown>>(
