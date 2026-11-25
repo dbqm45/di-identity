@@ -221,6 +221,28 @@ export async function configure(admin: Admin, suite: SuiteConfig, env: NodeJS.Pr
     const providers = await admin.call<Named[]>('GET', `${R}/identity-provider/instances`);
     if (providers.some((x) => x.alias === p.alias)) await admin.call('PUT', `${R}/identity-provider/instances/${p.alias}`, body);
     else await admin.call('POST', `${R}/identity-provider/instances`, body);
-    log(`identity provider ${p.alias}: configured`);
+
+    // DI3: Google sends no username, and Keycloak would then take the e-mail, which reaches every application as
+    // `preferred_username` (seen on Keycloak 26.4.7, 2026-11-25). The username is `<alias>.<subject>` instead, set again
+    // at every sign-in (FORCE), so earlier e-mail usernames are replaced at the person's next sign-in.
+    const username = {
+      name: 'username from subject',
+      identityProviderAlias: p.alias,
+      identityProviderMapper: 'oidc-username-idp-mapper',
+      config: { template: '${ALIAS}.${CLAIM.sub}', syncMode: 'FORCE' },
+    };
+    const idpMappers = await admin.call<Named[]>('GET', `${R}/identity-provider/instances/${p.alias}/mappers`);
+    const oldMapper = idpMappers.find((m) => m.name === username.name);
+    if (oldMapper) await admin.call('PUT', `${R}/identity-provider/instances/${p.alias}/mappers/${oldMapper.id}`, { ...username, id: oldMapper.id });
+    else await admin.call('POST', `${R}/identity-provider/instances/${p.alias}/mappers`, username);
+    log(`identity provider ${p.alias}: configured (username from the provider's subject, never the e-mail)`);
+  }
+
+  // A person may not change their username (the review form at the first sign-in offered it): only an administrator.
+  const profile = await admin.call<{ attributes: { name: string; permissions?: { view?: string[]; edit?: string[] } }[] }>('GET', `${R}/users/profile`);
+  const usernameAttribute = profile.attributes.find((a) => a.name === 'username');
+  if (usernameAttribute && JSON.stringify(usernameAttribute.permissions?.edit) !== JSON.stringify(['admin'])) {
+    usernameAttribute.permissions = { view: usernameAttribute.permissions?.view ?? ['admin', 'user'], edit: ['admin'] };
+    await admin.call('PUT', `${R}/users/profile`, profile);
   }
 }

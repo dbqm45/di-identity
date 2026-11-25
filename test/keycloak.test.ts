@@ -69,6 +69,23 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     assert.ok((await scopesOf('di-release')).includes('suite-identity'));
   });
 
+  // DI3: a person from Google has no username of their own, and Keycloak would make it their e-mail, which then goes to
+  // every application as `preferred_username` (checked live on 2026-11-25). The username comes from the provider's
+  // subject instead, and a person cannot change it at the first sign-in.
+  await t.test('people from an identity provider never get their e-mail as username', async () => {
+    const google = { GOOGLE_CLIENT_ID: 'dummy-client.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'dummy-secret' };
+    await configure(admin, suite, google);
+    await configure(admin, suite, google);
+    const mappers = await admin.call<{ name: string; identityProviderMapper: string; config: Record<string, string> }[]>(
+      'GET', `${R}/identity-provider/instances/google/mappers`,
+    );
+    const username = mappers.filter((m) => m.identityProviderMapper === 'oidc-username-idp-mapper');
+    assert.equal(username.length, 1, 'one username mapper, also after a second configure');
+    assert.deepEqual(username[0]!.config, { template: '${ALIAS}.${CLAIM.sub}', syncMode: 'FORCE' });
+    const profile = await admin.call<{ attributes: { name: string; permissions?: { edit?: string[] } }[] }>('GET', `${R}/users/profile`);
+    assert.deepEqual(profile.attributes.find((a) => a.name === 'username')?.permissions?.edit, ['admin']);
+  });
+
   // A person with a password and a public test client exist only in this test: the suite realm has no password login.
   await createOrganization(admin, { realm: suite.realm, alias: run, name: `Test ${run}`, domain: `${run}.test` });
   const person = await admin.create(`${R}/users`, {

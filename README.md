@@ -28,6 +28,14 @@ produktów jako role klientów i agenci jako osobne podmioty z właścicielem (D
 | `resource_access.<aplikacja>.roles` | role w danej aplikacji; w tokenie dostępu i w ID tokenie (dla aplikacji, które czytają role z ID tokenu, np. DI Release Control) | role nadane agentowi |
 | `kind`, `owner` | brak | `agent` i `sub` właściciela |
 | `email` | tylko dla aplikacji z `email: true` (DI3) | nigdy (szablon go pomija) |
+| `preferred_username` | nazwa użytkownika; osoba od dostawcy (Google) ma `<dostawca>.<sub>`, nigdy e-mail | `service-account-agent-…` |
+
+Dlaczego tak (sprawdzone 2026-11-25 na Keycloak 26.4.7, dostawca OIDC bez `preferred_username`, jak Google): bez
+ustawień Keycloak nadaje osobie od dostawcy nazwę użytkownika równą e-mailowi, a ta trafia do każdej aplikacji jako
+`preferred_username` — także do tych bez e-maila (DI3). `configure` dodaje dostawcy mapper `username from subject`
+(`${ALIAS}.${CLAIM.sub}`, synchronizacja przy każdym logowaniu, więc wcześniejsze nazwy-e-maile zmieniają się przy
+następnym logowaniu) i odbiera osobie prawo zmiany nazwy użytkownika (profil użytkownika realmu: edycja tylko admin;
+wcześniej formularz pierwszego logowania pozwalał wpisać tam e-mail).
 
 Keycloak dopisuje do `aud` każdą aplikację, w której podmiot ma role. Dlatego szablon przyjmuje token osoby tylko
 wtedy, gdy `azp` wskazuje tę aplikację (albo klienta z `OIDC_AUTHORIZED_PARTIES`).
