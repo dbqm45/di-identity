@@ -2,7 +2,8 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { TokenError, type Verifier } from '../auth/oidc.ts';
 import { DirectoryError, type Directory, type Person } from './directory.ts';
-import { page, peopleBody, invitationsBody, joinedPage, agentsBody, logBody, refusal } from './pages.ts';
+import { page, peopleBody, invitationsBody, joinedPage, signInBody, agentsBody, logBody, refusal } from './pages.ts';
+import { checkIssuer } from './discovery.ts';
 import type { AdminSession, AdminStore, Invitation } from './store.ts';
 
 /**
@@ -40,6 +41,8 @@ export interface AdminInput {
   products: Record<string, string[]>;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  /** A console on localhost: an organization's provider may also be on localhost over http (AC1b.2). */
+  allowLocalProviders?: boolean;
 }
 
 const random = () => randomBytes(32).toString('base64url');
@@ -200,7 +203,7 @@ export function adminRoutes(app: FastifyInstance, input: AdminInput): void {
     return reply.redirect(`/admin/o/${found.session.organizations[0]}/people`);
   });
 
-  const pageFor = (section: 'people' | 'invitations' | 'agents' | 'log') => async (request: FastifyRequest, reply: FastifyReply) => {
+  const pageFor = (section: 'people' | 'invitations' | 'sign-in' | 'agents' | 'log') => async (request: FastifyRequest, reply: FastifyReply) => {
     const found = await sessionOf(request);
     if (!found) return reply.redirect('/admin/login');
     const org = (request.params as { org: string }).org;
@@ -210,11 +213,16 @@ export function adminRoutes(app: FastifyInstance, input: AdminInput): void {
     if (section === 'invitations') {
       return html(reply, 200, page(ctx, invitationsBody(org, await input.store.invitations(org), input.products, found.session.csrf, new Date(now()))));
     }
+    if (section === 'sign-in') {
+      const [provider, domains] = await Promise.all([input.directory.provider(org), input.directory.domains(org)]);
+      return html(reply, 200, page(ctx, signInBody(org, provider, domains, found.session.csrf, `${input.issuer}/broker/org-${org}/endpoint`)));
+    }
     if (section === 'agents') return html(reply, 200, page(ctx, agentsBody(org, await input.directory.agents(org), found.session.csrf)));
     return html(reply, 200, page(ctx, logBody(await input.store.latest(org, 100))));
   };
   app.get('/admin/o/:org/people', pageFor('people'));
   app.get('/admin/o/:org/invitations', pageFor('invitations'));
+  app.get('/admin/o/:org/sign-in', pageFor('sign-in'));
   app.get('/admin/o/:org/agents', pageFor('agents'));
   app.get('/admin/o/:org/log', pageFor('log'));
 
@@ -347,6 +355,42 @@ export function adminRoutes(app: FastifyInstance, input: AdminInput): void {
     if (!UUID.test(id) || !(await input.store.revokeInvitation(org, id, new Date(now())))) return html(reply, 404, refusal('No open invitation like that in this organization.'));
     await record(session, org, 'invitation_revoked', id);
     return back(reply, org, 'invitations');
+  });
+
+  app.post('/admin/o/:org/sign-in', async (request, reply) => {
+    const { org } = request.params as { org: string };
+    const session = await change(request, reply, org);
+    if (!session) return reply;
+    const body = request.body as Record<string, unknown>;
+    const text = (k: string, max: number) => String(body[k] ?? '').trim().slice(0, max);
+    let issuer;
+    try {
+      issuer = checkIssuer(text('issuer', 500), input.allowLocalProviders ?? false);
+    } catch (err) {
+      return html(reply, 400, refusal((err as Error).message));
+    }
+    const clientId = text('clientId', 200);
+    const clientSecret = String(body.clientSecret ?? '');
+    const domain = text('domain', 253);
+    if (!/^[\x21-\x7e]{1,200}$/.test(clientId)) return html(reply, 400, refusal('Give the client id from your provider.'));
+    if (clientSecret.length > 1000) return html(reply, 400, refusal('The client secret is too long.'));
+    try {
+      await input.directory.setProvider(org, { issuer, clientId, domain, ...(clientSecret ? { clientSecret } : {}) });
+    } catch (err) {
+      if (!(err instanceof DirectoryError)) throw err;
+      return html(reply, 409, refusal(err.message));
+    }
+    await record(session, org, 'provider_set', `${issuer} (${domain})`);
+    return back(reply, org, 'sign-in');
+  });
+
+  app.post('/admin/o/:org/sign-in/remove', async (request, reply) => {
+    const { org } = request.params as { org: string };
+    const session = await change(request, reply, org);
+    if (!session) return reply;
+    if (!(await input.directory.removeProvider(org))) return html(reply, 404, refusal('This organization has no sign-in of its own.'));
+    await record(session, org, 'provider_removed', `org-${org}`);
+    return back(reply, org, 'sign-in');
   });
 
   app.post('/admin/o/:org/agents/disable-all', async (request, reply) => {

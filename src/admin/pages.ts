@@ -1,4 +1,4 @@
-import type { AgentView, Person } from './directory.ts';
+import type { AgentView, OrgProvider, Person } from './directory.ts';
 import type { AdminEvent, AdminSession, Invitation } from './store.ts';
 
 /**
@@ -19,7 +19,7 @@ td,th{border-bottom:1px solid #e5e9ef;padding:8px;text-align:left;vertical-align
 interface PageContext {
   session: AdminSession;
   org: string;
-  section: 'people' | 'invitations' | 'agents' | 'log';
+  section: 'people' | 'invitations' | 'sign-in' | 'agents' | 'log';
 }
 
 const csrfField = (csrf: string) => `<input type="hidden" name="csrf" value="${escape(csrf)}">`;
@@ -33,7 +33,7 @@ export function page(ctx: PageContext, body: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Admin Console · ${escape(ctx.org)}</title><style>${STYLE}</style></head><body>
 <header><strong>DI Admin Console</strong><span>${escape(ctx.org)}${orgs}</span>
-<nav>${link('people', 'People')}${link('invitations', 'Invitations')}${link('agents', 'Agents')}${link('log', 'Change log')}</nav>
+<nav>${link('people', 'People')}${link('invitations', 'Invitations')}${link('sign-in', 'Sign-in')}${link('agents', 'Agents')}${link('log', 'Change log')}</nav>
 <span class="muted">${escape(ctx.session.name)}</span>
 <form class="inline" method="post" action="/admin/logout">${csrfField(ctx.session.csrf)}<button type="submit">Sign out</button></form></header>
 <main>${body}</main></body></html>`;
@@ -92,6 +92,29 @@ export function invitationsBody(org: string, invitations: Invitation[], products
     options.map((o) => `<label class="role"><input type="checkbox" name="role" value="${escape(o)}"> ${escape(o)}</label>`).join(' ')}</fieldset>
 <button type="submit">Create an invitation link</button> <span class="muted">They sign in with the suite (Google or your organization's sign-in), never with a password.</span></form>
 <table><thead><tr><th>Roles</th><th>Created by</th><th>State</th><th></th></tr></thead><tbody>${rows.join('') || '<tr><td colspan="4" class="muted">No invitations yet.</td></tr>'}</tbody></table>`;
+}
+
+/** The organization's own OIDC provider (AC1b.2): its settings without the secret, the form, removing it. */
+export function signInBody(org: string, provider: OrgProvider | null, domains: string[], csrf: string, redirect: string): string {
+  const base = `/admin/o/${escape(org)}/sign-in`;
+  const now = provider
+    ? `<p>People with an address at <strong>${escape(provider.domain)}</strong> sign in at <code>${escape(provider.issuer)}</code> (client <code>${escape(provider.clientId)}</code>).</p>
+<form method="post" action="${base}/remove">${csrfField(csrf)}<button type="submit">Remove this sign-in</button>
+<span class="muted">People it created stay in the organization but cannot sign in until another one is set.</span></form>`
+    : '<p class="muted">No sign-in of your own yet: people sign in with Google.</p>';
+  const field = (name: string, label: string, value = '', type = 'text', extra = '') =>
+    `<p><label>${label}<br><input type="${type}" name="${name}" value="${escape(value)}" size="60" ${extra}></label></p>`;
+  const choices = domains.map((d) => `<option${provider?.domain === d ? ' selected' : ''}>${escape(d)}</option>`).join('');
+  return `<h1>Sign-in</h1>${now}
+<h2>${provider ? 'Change it' : 'Use your own OpenID Connect provider'}</h2>
+<p>At your provider, register a confidential client with the redirect address <code>${escape(redirect)}</code>.</p>
+<p class="muted">The suite never trusts the provider's e-mail and never joins its accounts to existing ones: each person gets a new account, made a member of ${escape(org)}; roles still come from this console.</p>
+<form method="post" action="${base}">${csrfField(csrf)}
+${field('issuer', 'Issuer (https)', provider?.issuer ?? '', 'url', 'required')}
+${field('clientId', 'Client id', provider?.clientId ?? '', 'text', 'required')}
+${field('clientSecret', provider ? 'Client secret (leave empty to keep the stored one)' : 'Client secret', '', 'password', 'autocomplete="off"')}
+<p><label>Your domain<br><select name="domain" required>${choices}</select></label></p>
+<button type="submit">Save</button></form>`;
 }
 
 /** What the invited person sees after joining. */

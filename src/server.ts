@@ -11,6 +11,7 @@ import { lookupByEmail } from './keycloak/people.ts';
 import { peopleRoutes } from './people-api.ts';
 import { adminRoutes } from './admin/routes.ts';
 import { keycloakDirectory } from './admin/directory.ts';
+import { discoverIssuer } from './admin/discovery.ts';
 import { postgresAdminStore } from './admin/store.ts';
 import { loadSuite } from './keycloak/configure.ts';
 
@@ -59,6 +60,8 @@ if (keycloakUrl && clientSecret && adminSecret) {
   const products = Object.fromEntries(suite.clients.filter((c) => c.clientId !== 'di-identity').map((c) => [c.clientId, c.roles]));
   const service = keycloakServiceAdmin({ url: keycloakUrl, realm: suite.realm, clientId: config.oidcAudience, clientSecret });
   const publicUrl = process.env.ADMIN_PUBLIC_URL?.trim() || `http://127.0.0.1:${config.port}`;
+  // A console on localhost is local mode: an organization's own provider may be a local Keycloak realm over http.
+  const allowLocalProviders = ['localhost', '127.0.0.1', '[::1]'].includes(new URL(publicUrl).hostname);
   adminRoutes(app, {
     issuer: config.oidcIssuer,
     clientId: 'di-admin',
@@ -66,8 +69,9 @@ if (keycloakUrl && clientSecret && adminSecret) {
     publicUrl,
     verifier: createVerifier({ issuer: config.oidcIssuer, audience: 'di-admin', fetchJwks: discoveryJwks(config.oidcIssuer) }),
     store: postgresAdminStore(pool),
-    directory: keycloakDirectory(service, suite.realm, products),
+    directory: keycloakDirectory(service, suite.realm, products, (issuer) => discoverIssuer(issuer, { allowLocal: allowLocalProviders })),
     products,
+    allowLocalProviders,
   });
   app.log.info(`admin console: ${publicUrl}/admin`);
 } else {

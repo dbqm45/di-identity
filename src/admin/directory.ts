@@ -1,6 +1,9 @@
-import type { Admin } from '../keycloak/admin.ts';
+import { AdminError, type Admin } from '../keycloak/admin.ts';
 import { listAgents, organizationByAlias, setAgentEnabled } from '../keycloak/agents.ts';
 import { addMember, findPerson, grantRole, revokeRole } from '../keycloak/people.ts';
+import { getOrgProvider, removeOrgProvider, setOrgProvider, type OrgProvider } from '../keycloak/org-provider.ts';
+
+export type { OrgProvider };
 
 /**
  * What the admin console (docs/plan-admin-console.md) reads and changes in Keycloak, with the di-identity service
@@ -38,6 +41,13 @@ export interface Directory {
   revoke(id: string, role: string): Promise<void>;
   agents(organization: string): Promise<AgentView[]>;
   setAgent(clientId: string, enabled: boolean): Promise<void>;
+  /** The organization's domains (set when it was created). */
+  domains(organization: string): Promise<string[]>;
+  /** The organization's own OIDC provider (AC1b.2), without its secret. */
+  provider(organization: string): Promise<OrgProvider | null>;
+  /** Creates or updates it; a missing `clientSecret` keeps the stored one. DirectoryError with a reason otherwise. */
+  setProvider(organization: string, input: { issuer: string; clientId: string; clientSecret?: string; domain: string }): Promise<OrgProvider>;
+  removeProvider(organization: string): Promise<boolean>;
 }
 
 interface Member {
@@ -50,7 +60,12 @@ interface Member {
 
 const nameOf = (m: Member) => [m.firstName, m.lastName].filter(Boolean).join(' ') || m.username || m.id;
 
-export function keycloakDirectory(admin: Admin, realm: string, products: Record<string, string[]>): Directory {
+/** The issuer's OpenID metadata, fetched with the console's address checks (src/admin/discovery.ts). */
+export type Discover = (issuer: string) => Promise<Record<string, unknown>>;
+
+export function keycloakDirectory(admin: Admin, realm: string, products: Record<string, string[]>, discover: Discover = async () => {
+  throw new DirectoryError('setting up a provider is not available here');
+}): Directory {
   const R = `/${realm}`;
   const rolesOf = async (id: string): Promise<string[]> => {
     const mappings = await admin.call<{ clientMappings?: Record<string, { client?: string; mappings?: { name: string }[] }> }>('GET', `${R}/users/${id}/role-mappings`);
@@ -100,6 +115,26 @@ export function keycloakDirectory(admin: Admin, realm: string, products: Record<
     },
     async setAgent(clientId, enabled) {
       await setAgentEnabled(admin, realm, clientId, enabled);
+    },
+    async domains(organization) {
+      const org = await organizationByAlias(admin, realm, organization);
+      const full = await admin.call<{ domains?: { name: string }[] }>('GET', `${R}/organizations/${org.id}`);
+      return (full.domains ?? []).map((d) => d.name);
+    },
+    async provider(organization) {
+      return getOrgProvider(admin, realm, organization);
+    },
+    async setProvider(organization, input) {
+      try {
+        return await setOrgProvider(admin, { realm, organization, ...input, discover });
+      } catch (err) {
+        // Our own reasons (the domain, the secret, the metadata, the address) are for the admin; Keycloak's are not.
+        if (err instanceof AdminError || !(err instanceof Error)) throw err;
+        throw new DirectoryError(err.message);
+      }
+    },
+    async removeProvider(organization) {
+      return removeOrgProvider(admin, realm, organization);
     },
   };
 }

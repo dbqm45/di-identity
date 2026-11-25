@@ -115,8 +115,10 @@
       "manage-users",
       "view-clients",
       "manage-clients",
-      "manage-realm"
+      "manage-realm",
+      "view-identity-providers",
+      "manage-identity-providers"
     ],
-    "why": "the people lookup API reads users and their organizations; the admin console (docs/plan-admin-console.md) changes memberships and product roles (manage-users, view-clients), turns agents off and on (manage-clients) and reads and changes organization members — Keycloak 26.4 answers 403 to the organizations API without manage-realm, even to reads (checked 2026-11-25)"
+    "why": "the people lookup API reads users and their organizations; the admin console (docs/plan-admin-console.md) changes memberships and product roles (manage-users, view-clients), turns agents off and on (manage-clients) and reads and changes organization members — Keycloak 26.4 answers 403 to the organizations API without manage-realm, even to reads (checked 2026-11-25) AC1b.2 (the organization's own OIDC provider): view-identity-providers and manage-identity-providers, without which the identity provider API answers 403 although manage-realm is there (Keycloak 26.4.7, 2026-11-25)."
   }
 }

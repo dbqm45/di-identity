@@ -53,6 +53,13 @@ export const loadSuite = (file: URL = SUITE_FILE): SuiteConfig => JSON.parse(rea
 
 export const SUITE_SCOPE = 'suite-identity';
 /**
+ * First sign-in through an organization's own provider (AC1b.2, docs/plan-admin-console-ac1b.md): review the profile,
+ * create a new user only if none has that e-mail, make them a member. Nothing links an existing account, so a
+ * provider cannot take over a person who signs in with Google (checked on Keycloak 26.4.7, 2026-11-25).
+ */
+export const CREATE_ONLY_FLOW = 'first broker login - create only';
+const CREATE_ONLY_STEPS = ['idp-review-profile', 'idp-create-user-if-unique', 'idp-add-organization-member'];
+/**
  * Scopes every product client gets; `email` only for DI3 clients. `basic` carries `sub` in Keycloak 26;
  * `service_account` (Keycloak adds it to clients with a service account) carries `client_id`, by which other suite
  * services recognise a service token (ADR 17 §2.4).
@@ -320,6 +327,21 @@ export async function configure(admin: Admin, suite: SuiteConfig, env: NodeJS.Pr
     else await admin.call('POST', `${R}/identity-provider/instances/${p.alias}/mappers`, username);
     log(`identity provider ${p.alias}: configured (username from the provider's subject, never the e-mail)`);
   }
+
+  // The first sign-in flow for organizations' own providers; its steps are set again when they differ.
+  const flows = await admin.call<Named[]>('GET', `${R}/authentication/flows`);
+  if (!flows.some((f) => f.alias === CREATE_ONLY_FLOW)) {
+    await admin.call('POST', `${R}/authentication/flows`, { alias: CREATE_ONLY_FLOW, providerId: 'basic-flow', topLevel: true, builtIn: false, description: 'AC1b.2: create a new user and make them a member; never link an existing account' });
+  }
+  const flowPath = `${R}/authentication/flows/${encodeURIComponent(CREATE_ONLY_FLOW)}/executions`;
+  let steps = await admin.call<{ id: string; providerId: string; requirement: string }[]>('GET', flowPath);
+  if (JSON.stringify(steps.map((e) => e.providerId)) !== JSON.stringify(CREATE_ONLY_STEPS)) {
+    for (const e of steps) await admin.call('DELETE', `${R}/authentication/executions/${e.id}`);
+    for (const provider of CREATE_ONLY_STEPS) await admin.call('POST', `${flowPath}/execution`, { provider });
+    steps = await admin.call('GET', flowPath);
+  }
+  for (const e of steps) if (e.requirement !== 'REQUIRED') await admin.call('PUT', flowPath, { id: e.id, requirement: 'REQUIRED' });
+  log(`authentication flow ${CREATE_ONLY_FLOW}: ${CREATE_ONLY_STEPS.join(', ')}`);
 
   // A person may not change their username (the review form at the first sign-in offered it): only an administrator.
   const profile = await admin.call<{ attributes: { name: string; permissions?: { view?: string[]; edit?: string[] } }[] }>('GET', `${R}/users/profile`);
