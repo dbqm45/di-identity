@@ -129,6 +129,36 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     await assert.rejects(strict.verify(String(res.body.access_token)), /issued to another application/);
   });
 
+  // The remote MCP server of pdi (dbqm45/pdi docs/plan-mcp-zdalny.md) is a resource server of DI Decision; Claude Code
+  // signs in through this public client with PKCE on a fixed loopback port.
+  await t.test('the MCP client of DI Decision is public with PKCE, and its token is only for DI Decision, without email', async () => {
+    const [c] = await admin.call<(Record<string, unknown> & { id: string })[]>('GET', `${R}/clients?clientId=di-decision-mcp`);
+    assert.ok(c, 'client di-decision-mcp exists');
+    assert.equal(c.publicClient, true);
+    assert.equal(c.serviceAccountsEnabled, false);
+    assert.equal(c.directAccessGrantsEnabled, false);
+    assert.equal(c.implicitFlowEnabled, false);
+    assert.equal(c.fullScopeAllowed, false);
+    assert.equal((c.attributes as Record<string, string>)['pkce.code.challenge.method'], 'S256');
+    assert.deepEqual([...(c.redirectUris as string[])].sort(), ['http://127.0.0.1:33418/callback', 'http://localhost:33418/callback']);
+    const scopes = (await admin.call<{ name: string }[]>('GET', `${R}/clients/${c.id}/default-client-scopes`)).map((s) => s.name);
+    assert.ok(!scopes.includes('email'));
+    const optional = await admin.call<{ name: string }[]>('GET', `${R}/clients/${c.id}/optional-client-scopes`);
+    assert.deepEqual(optional.map((s) => s.name), [], 'no offline_access, phone, address or other optional scope');
+
+    await grantRole(admin, { realm: suite.realm, who: person, role: 'di-decision:viewer' });
+    const claims = await admin.call<Record<string, unknown>>(
+      'GET', `${R}/clients/${c.id}/evaluate-scopes/generate-example-access-token?userId=${person}&scope=openid`,
+    );
+    assert.equal(claims.azp, 'di-decision-mcp');
+    assert.deepEqual([claims.aud].flat(), ['di-decision']);
+    // Only DI Decision's roles, although the person also has a role in DI Release.
+    assert.deepEqual(claims.resource_access, { 'di-decision': { roles: ['viewer'] } });
+    assert.deepEqual(claims.organization, [run]);
+    assert.equal(claims.email, undefined);
+    await revokeRole(admin, { realm: suite.realm, who: person, role: 'di-decision:viewer' });
+  });
+
   const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   const kid = `k-${run}`;
   const publicJwk = { ...(publicKey.export({ format: 'jwk' }) as Record<string, unknown>), kid };
