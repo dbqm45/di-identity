@@ -1,13 +1,13 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { TokenError, type Verifier } from '../auth/oidc.ts';
 import { DirectoryError, type Directory, type Person } from './directory.ts';
-import { page, peopleBody, agentsBody, logBody, refusal } from './pages.ts';
-import type { AdminSession, AdminStore } from './store.ts';
+import { page, peopleBody, invitationsBody, joinedPage, agentsBody, logBody, refusal } from './pages.ts';
+import type { AdminSession, AdminStore, Invitation } from './store.ts';
 
 /**
  * The admin console, stage AC1 (docs/plan-admin-console.md): people of the admin's organizations, their product
- * roles, the organizations' agents and the change log. Sign-in through the suite (client `di-admin`, code flow with
+ * roles, the organizations' agents and the change log; AC1b.1 (docs/plan-admin-console-ac1b.md): invitations by link. Sign-in through the suite (client `di-admin`, code flow with
  * PKCE); the access token is checked by the template's verifier; only a person with `di-admin:admin` gets in, and
  * only to the organizations in their token. Sessions live in the store (only a SHA-256 of the cookie value); every
  * change needs the form token of the session and this origin, and goes to the log.
@@ -22,6 +22,9 @@ const ORG = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 const ID = /^[A-Za-z0-9-]{1,64}$/;
 const AGENT = /^agent-[a-z0-9-]{1,100}$/;
 const EMAIL = /^[^\s@]{1,64}@[^\s@]{1,190}$/;
+const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const TOKEN = /^[A-Za-z0-9_-]{43}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export interface AdminInput {
   issuer: string;
@@ -57,11 +60,18 @@ export function adminRoutes(app: FastifyInstance, input: AdminInput): void {
   const origin = new URL(input.publicUrl).origin;
   const secure = input.publicUrl.startsWith('https://') ? '; Secure' : '';
   const redirectUri = `${origin}/admin/callback`;
-  const pending = new Map<string, { verifier: string; expires: number }>();
+  // A sign-in in progress; `join` is the token hash of the invitation it was started for (AC1b.1).
+  const pending = new Map<string, { verifier: string; expires: number; join?: string }>();
   let discovery: { authorization_endpoint: string; token_endpoint: string; at: number } | null = null;
 
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_request, body, done) => {
-    done(null, Object.fromEntries(new URLSearchParams(body as string)));
+    // A repeated field (the roles of an invitation) becomes a list.
+    const out: Record<string, string | string[]> = {};
+    for (const [k, v] of new URLSearchParams(body as string)) {
+      const had = out[k];
+      out[k] = had === undefined ? v : [had, v].flat();
+    }
+    done(null, out);
   });
 
   const discover = async () => {
@@ -95,7 +105,7 @@ export function adminRoutes(app: FastifyInstance, input: AdminInput): void {
 
   // --- sign-in ---
 
-  app.get('/admin/login', async (request, reply) => {
+  const startSignIn = async (request: FastifyRequest, reply: FastifyReply, join?: string) => {
     let meta;
     try {
       meta = await discover();
@@ -106,7 +116,7 @@ export function adminRoutes(app: FastifyInstance, input: AdminInput): void {
     for (const [k, v] of pending) if (v.expires < now()) pending.delete(k);
     const state = random();
     const verifier = random();
-    pending.set(state, { verifier, expires: now() + LOGIN_TTL_MS });
+    pending.set(state, { verifier, expires: now() + LOGIN_TTL_MS, ...(join ? { join } : {}) });
     const url = new URL(meta.authorization_endpoint);
     url.search = new URLSearchParams({
       client_id: input.clientId, response_type: 'code', scope: 'openid profile email', redirect_uri: redirectUri, state,
@@ -114,6 +124,20 @@ export function adminRoutes(app: FastifyInstance, input: AdminInput): void {
     }).toString();
     reply.header('set-cookie', `${ADMIN_LOGIN_COOKIE}=${state}; Path=/admin/callback; Max-Age=${LOGIN_TTL_MS / 1000}; HttpOnly; SameSite=Lax${secure}`);
     return reply.redirect(url.toString());
+  };
+
+  app.get('/admin/login', async (request, reply) => startSignIn(request, reply));
+
+  const isOpen = (i: Invitation) => !i.usedAt && !i.revokedAt && i.expiresAt.getTime() > now();
+  const GONE = 'This invitation was already used, revoked or has expired. Ask the administrator for a new link.';
+
+  // An invitation link (AC1b.1): the person signs in through the suite first; the callback lets them join.
+  app.get('/admin/join/:token', async (request, reply) => {
+    const { token } = request.params as { token: string };
+    const invitation = TOKEN.test(token) ? await input.store.invitationByHash(sha256(token)) : null;
+    if (!invitation) return html(reply, 404, refusal('No such invitation.'));
+    if (!isOpen(invitation)) return html(reply, 410, refusal(GONE));
+    return startSignIn(request, reply, sha256(token));
   });
 
   app.get('/admin/callback', async (request, reply) => {
@@ -142,6 +166,20 @@ export function adminRoutes(app: FastifyInstance, input: AdminInput): void {
       request.log.warn({ err: (err as Error).message }, 'admin console sign-in failed');
       return html(reply, 502, refusal('The sign-in through the suite failed. <a href="/admin/login">Try again</a>.', true));
     }
+    if (entry.join) {
+      const invitation = await input.store.invitationByHash(entry.join);
+      if (!invitation || !isOpen(invitation)) return html(reply, 410, refusal(GONE));
+      if (identity.kind !== 'person') return html(reply, 403, refusal('An invitation is for a person, not an agent.'));
+      if (!(await input.store.useInvitation(invitation.id, identity.sub, new Date(now())))) return html(reply, 410, refusal(GONE));
+      const { person } = await input.directory.join(invitation.organization, identity.sub);
+      const granted = invitation.roles.filter((r) => !person.roles.includes(r));
+      for (const role of granted) await input.directory.grant(person.id, role);
+      await input.store.record({
+        organization: invitation.organization, actorSub: identity.sub, actorName: identity.name, kind: 'invitation_accepted',
+        subject: `${person.name}: ${invitation.roles.join(', ')}`,
+      });
+      return html(reply, 200, joinedPage(invitation.organization, granted));
+    }
     if (identity.kind !== 'person' || !identity.roles.includes('admin')) {
       return html(reply, 403, refusal('The admin console is for people with the admin role of DI Admin Console (di-admin:admin).'));
     }
@@ -162,17 +200,21 @@ export function adminRoutes(app: FastifyInstance, input: AdminInput): void {
     return reply.redirect(`/admin/o/${found.session.organizations[0]}/people`);
   });
 
-  const pageFor = (section: 'people' | 'agents' | 'log') => async (request: FastifyRequest, reply: FastifyReply) => {
+  const pageFor = (section: 'people' | 'invitations' | 'agents' | 'log') => async (request: FastifyRequest, reply: FastifyReply) => {
     const found = await sessionOf(request);
     if (!found) return reply.redirect('/admin/login');
     const org = (request.params as { org: string }).org;
     if (!found.session.organizations.includes(org)) return html(reply, 404, refusal('No such organization.'));
     const ctx = { session: found.session, org, section };
     if (section === 'people') return html(reply, 200, page(ctx, peopleBody(org, await input.directory.people(org), input.products, found.session.csrf)));
+    if (section === 'invitations') {
+      return html(reply, 200, page(ctx, invitationsBody(org, await input.store.invitations(org), input.products, found.session.csrf, new Date(now()))));
+    }
     if (section === 'agents') return html(reply, 200, page(ctx, agentsBody(org, await input.directory.agents(org), found.session.csrf)));
     return html(reply, 200, page(ctx, logBody(await input.store.latest(org, 100))));
   };
   app.get('/admin/o/:org/people', pageFor('people'));
+  app.get('/admin/o/:org/invitations', pageFor('invitations'));
   app.get('/admin/o/:org/agents', pageFor('agents'));
   app.get('/admin/o/:org/log', pageFor('log'));
 
@@ -281,6 +323,31 @@ export function adminRoutes(app: FastifyInstance, input: AdminInput): void {
       return back(reply, org, 'people');
     });
   }
+
+  app.post('/admin/o/:org/invitations', async (request, reply) => {
+    const { org } = request.params as { org: string };
+    const session = await change(request, reply, org);
+    if (!session) return reply;
+    const given = (request.body as Record<string, unknown>).role;
+    const roles = [...new Set([given ?? []].flat().map(String))].sort();
+    if (!roles.length || !roles.every(productRole)) return html(reply, 400, refusal('Choose at least one product role.'));
+    const token = random();
+    await input.store.createInvitation(sha256(token), {
+      id: randomUUID(), organization: org, roles, createdBySub: session.sub, createdByName: session.name, expiresAt: new Date(now() + INVITATION_TTL_MS),
+    });
+    await record(session, org, 'invitation_created', roles.join(', '));
+    const ctx = { session, org, section: 'invitations' as const };
+    return html(reply, 200, page(ctx, invitationsBody(org, await input.store.invitations(org), input.products, session.csrf, new Date(now()), `${origin}/admin/join/${token}`)));
+  });
+
+  app.post('/admin/o/:org/invitations/:id/revoke', async (request, reply) => {
+    const { org, id } = request.params as { org: string; id: string };
+    const session = await change(request, reply, org);
+    if (!session) return reply;
+    if (!UUID.test(id) || !(await input.store.revokeInvitation(org, id, new Date(now())))) return html(reply, 404, refusal('No open invitation like that in this organization.'));
+    await record(session, org, 'invitation_revoked', id);
+    return back(reply, org, 'invitations');
+  });
 
   app.post('/admin/o/:org/agents/disable-all', async (request, reply) => {
     const { org } = request.params as { org: string };

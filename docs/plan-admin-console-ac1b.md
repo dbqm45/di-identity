@@ -1,6 +1,6 @@
 # Admin Console, etap AC1b — zaproszenia i dostawca tożsamości klienta — plan
 
-Stan: 2026-11-25, propozycja do zatwierdzenia przez właściciela. Ciąg dalszy [AC1](plan-admin-console.md) (decyzja 4:
+Stan: 2026-11-25, decyzje 1–5 przyjęte przez właściciela; AC1b.1 zrobione (zaproszenia), AC1b.2 czeka. Ciąg dalszy [AC1](plan-admin-console.md) (decyzja 4:
 „poza tym krokiem, każde osobno”). Źródło zakresu: `dbqm45/pdi` `docs/plan-budowy-suity.md` §2b (AC1: zaproszenia,
 podłączenie dostawcy tożsamości klienta) i ADR 17 (DI1: bez własnej bazy haseł, DI2: Google najpierw, DI3: bez
 e-maila poza klientami z `email: true`).
@@ -61,3 +61,16 @@ e-maila poza klientami z `email: true`).
   wygaśnie. Ograniczają to jedno użycie, 7 dni, odwołanie i wpis w dzienniku.
 - Dostawca klienta to obca strona, która potwierdza tożsamość. Organizacja ufa mu tylko dla swoich ludzi: konto
   powstaje nowe, nie łączy się po e-mailu, a role nadaje admin organizacji, nie dostawca.
+
+## Co wyszło przy wdrożeniu AC1b.1 (2026-11-25)
+
+- Przyjęcie zaproszenia korzysta z logowania konsoli (klient `di-admin`, ten sam `/admin/callback`). Osoba bez roli
+  admina nie dostaje sesji konsoli, tylko stronę „You joined …”.
+- Link jest oznaczany jako użyty przed dodaniem osoby (warunkowy `UPDATE`), więc dwa równoczesne przyjęcia nie wpuszczą
+  dwóch osób. Gdyby Keycloak zawiódł w trakcie, zaproszenie zostaje zużyte i admin tworzy nowe.
+- Na żywo (lokalny Keycloak 26.4.7): `adm.test` utworzył zaproszenie z `di-release:viewer`. Nowa osoba z `fakegoogle`
+  przy pierwszym logowaniu podała imię i nazwisko (Google ich nie daje), trafiła do `acme` z tą rolą, a w dzienniku
+  jest `invitation_accepted` na nią. Drugie otwarcie linku dostało `410`.
+- **Do hostingu:** `Caddyfile` blokuje z zewnątrz całe `/admin`, bo to też ścieżka konsoli Keycloak. Konsola i linki
+  zaproszeń potrzebują więc osobnej domeny albo innej ścieżki, z blokadą `/admin` tylko dla Keycloak. To osobna
+  decyzja przy wdrożeniu.
