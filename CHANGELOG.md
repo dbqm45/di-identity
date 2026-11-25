@@ -2,6 +2,12 @@
 
 Notable changes, newest first. Entries are written by `npm run release` from Conventional Commits (RELEASING.md).
 
+## [0.1.6] - 2026-11-25
+
+### Added
+
+- **keycloak:** add the public MCP client of DI Decision (#9)
+
 ## [0.1.5] - 2026-11-25
 
 ### Added
