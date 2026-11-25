@@ -2,6 +2,12 @@
 
 Notable changes, newest first. Entries are written by `npm run release` from Conventional Commits (RELEASING.md).
 
+## [0.1.4] - 2026-11-25
+
+### Fixed
+
+- **keycloak:** never give people from Google their e-mail as username (#7)
+
 ## [0.1.3] - 2026-11-23
 
 ### Added
