@@ -10,7 +10,7 @@ import { peopleRoutes } from '../src/people-api.ts';
 import { createAgent, createOrganization, disableOrganizationAgents, listAgents, organizationByAlias, setAgentEnabled } from '../src/keycloak/agents.ts';
 import { configure, loadSuite, CREATE_ONLY_FLOW } from '../src/keycloak/configure.ts';
 import { getOrgProvider, removeOrgProvider, setOrgProvider } from '../src/keycloak/org-provider.ts';
-import { addMember, grantRole, lookupByEmail, revokeRole } from '../src/keycloak/people.ts';
+import { addMember, grantRole, lookupByEmail, lookupBySub, revokeRole } from '../src/keycloak/people.ts';
 import { clientSecrets, secretVariable } from '../src/keycloak/secrets.ts';
 
 // Against a real Keycloak 26 when KEYCLOAK_URL is set (CI starts one; locally: docker run, see README.md).
@@ -276,6 +276,11 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     const unverified = await admin.create(`${R}/users`, { username: `nv-${run}`, email: `nv@${run}.test`, enabled: true, emailVerified: false });
     assert.ok(unverified);
     assert.equal(await lookupByEmail(service, suite.realm, `nv@${run}.test`), null);
+    // And back: the person by `sub` with the verified e-mail (DI Channels: a person asked in pdi → their Slack user).
+    assert.deepEqual(await lookupBySub(service, suite.realm, person), { sub: person, name: 'Ola Nowak', email: `ola@${run}.test`, organizations: [run] });
+    assert.equal(await lookupBySub(service, suite.realm, unverified), null, 'no verified e-mail');
+    assert.equal(await lookupBySub(service, suite.realm, '00000000-0000-4000-8000-000000000000'), null);
+    assert.equal(await lookupBySub(service, suite.realm, agent.sub), null, 'never an agent');
 
     // DI Channels calls the API with its own service token (client credentials, role di-identity:people-reader).
     const channels = await tokenRequest({ grant_type: 'client_credentials', client_id: 'di-channels', client_secret: await secretOf('di-channels') });
@@ -285,7 +290,12 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     assert.equal(id.kind, 'service');
     assert.deepEqual(id.roles, ['people-reader']);
     const app = buildApp({ version: 't', verifier, eventsSecret: 'x'.repeat(32), vocabulary: loadVocabulary(), events: memoryEventStore(), checkDatabase: async () => {} });
-    peopleRoutes(app, { verifier, lookup: (email) => lookupByEmail(service, suite.realm, email) });
+    const emailClients = suite.clients.filter((c) => c.email).map((c) => c.clientId);
+    assert.ok(emailClients.includes('di-channels'));
+    peopleRoutes(app, { verifier, lookup: (email) => lookupByEmail(service, suite.realm, email), lookupSub: (sub) => lookupBySub(service, suite.realm, sub), emailClients });
+    const back = await app.inject({ url: `/api/people/${person}`, headers: { authorization: `Bearer ${channels.body.access_token}` } });
+    assert.equal(back.statusCode, 200);
+    assert.equal(back.json().email, `ola@${run}.test`);
     const ok = await app.inject({ url: `/api/people?email=ola@${run}.test`, headers: { authorization: `Bearer ${channels.body.access_token}` } });
     assert.equal(ok.statusCode, 200);
     assert.deepEqual(ok.json(), { sub: person, name: 'Ola Nowak', organizations: [run] });

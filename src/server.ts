@@ -7,7 +7,7 @@ import { runMigrations } from './db/migrate.ts';
 import { loadVocabulary } from './events/envelope.ts';
 import { postgresEventStore } from './events/store.ts';
 import { keycloakServiceAdmin } from './keycloak/admin.ts';
-import { lookupByEmail } from './keycloak/people.ts';
+import { lookupByEmail, lookupBySub } from './keycloak/people.ts';
 import { peopleRoutes } from './people-api.ts';
 import { adminRoutes } from './admin/routes.ts';
 import { keycloakDirectory } from './admin/directory.ts';
@@ -46,7 +46,14 @@ const keycloakUrl = process.env.KEYCLOAK_URL?.trim();
 const clientSecret = process.env.DI_IDENTITY_CLIENT_SECRET?.trim() || process.env.SUITE_CLIENT_SECRET_DI_IDENTITY?.trim();
 if (keycloakUrl && clientSecret) {
   const admin = keycloakServiceAdmin({ url: keycloakUrl, realm: 'suite', clientId: config.oidcAudience, clientSecret });
-  peopleRoutes(app, { verifier, lookup: (email) => lookupByEmail(admin, 'suite', email) });
+  // E-mails only for applications that may know them (DI3): the clients with `email: true` in keycloak/suite.json.
+  const emailClients = loadSuite().clients.filter((c) => c.email).map((c) => c.clientId);
+  peopleRoutes(app, {
+    verifier,
+    lookup: (email) => lookupByEmail(admin, 'suite', email),
+    lookupSub: (sub) => lookupBySub(admin, 'suite', sub),
+    emailClients,
+  });
 } else {
   app.log.warn('people lookup is off: set KEYCLOAK_URL and DI_IDENTITY_CLIENT_SECRET (or run: npm run identity -- secrets --env-file .env)');
 }

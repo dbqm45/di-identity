@@ -44,7 +44,14 @@ wtedy, gdy `azp` wskazuje tę aplikację (albo klienta z `OIDC_AUTHORIZED_PARTIE
 ## API dla innych aplikacji suity
 
 `GET /api/people?email=<adres>` zwraca osobę z suity z tym zweryfikowanym adresem e-mail: `{ sub, name, organizations }`
-(404, gdy nie ma dokładnie jednej takiej osoby; agentów nigdy). Tylko dla tokenu konta usługowego aplikacji z listy
+(404, gdy nie ma dokładnie jednej takiej osoby; agentów nigdy).
+
+`GET /api/people/<sub>` w drugą stronę: osoba po identyfikatorze, razem ze zweryfikowanym adresem e-mail:
+`{ sub, name, email, organizations }`. Jest tylko dla aplikacji, które mogą znać e-mail, czyli klientów z `email: true`
+w `keycloak/suite.json` (DI3, dziś DI Channels). Inna aplikacja, nawet z rolą `people-reader`, dostaje 403. Konto bez
+zweryfikowanego adresu, wyłączone albo agent daje 404. Po co: pdi przy „Ask team” (DI Team T6) wysyła do DI Channels
+tylko `sub` zapytanej osoby, a DI Channels sam szuka jej użytkownika w Slacku po e-mailu. E-mail nie przechodzi więc
+przez pdi. Tylko dla tokenu konta usługowego aplikacji z listy
 `OIDC_SERVICE_CLIENTS` z rolą `di-identity:people-reader` (na start DI Channels: osoba ze Slacka → osoba w suicie).
 Usługa czyta użytkowników kontem usługowym klienta `di-identity`; role w `realm-management` nadaje `configure`
 (`serviceRoles` i `identityServiceAccount` w `keycloak/suite.json`). Włącza je `DI_IDENTITY_CLIENT_SECRET`.

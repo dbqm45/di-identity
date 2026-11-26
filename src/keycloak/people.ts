@@ -88,3 +88,28 @@ export async function lookupByEmail(admin: Admin, realm: string, email: string):
   const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.username || u.id;
   return { sub: u.id, name, organizations: orgs.map((o) => o.alias).filter((a): a is string => !!a) };
 }
+
+export interface PersonWithEmail extends FoundPerson {
+  email: string;
+}
+
+/**
+ * The person with this `sub` and their verified e-mail, for a suite application that may know e-mails (DI3: only
+ * clients with `email: true`, e.g. DI Channels finding the Slack user of a person asked in pdi). An agent, a disabled
+ * account or one without a verified address counts as none.
+ */
+export async function lookupBySub(admin: Admin, realm: string, sub: string): Promise<PersonWithEmail | null> {
+  if (!UUID.test(sub)) return null;
+  const R = `/${realm}`;
+  let u: User & { enabled?: boolean; emailVerified?: boolean; firstName?: string; lastName?: string };
+  try {
+    u = await admin.call('GET', `${R}/users/${sub}`);
+  } catch (e) {
+    if ((e as { status?: number }).status === 404) return null;
+    throw e;
+  }
+  if (!u.enabled || !u.emailVerified || !u.email || u.attributes?.kind?.includes('agent') || u.username?.startsWith('service-account-')) return null;
+  const orgs = await admin.call<{ alias?: string }[]>('GET', `${R}/organizations/members/${u.id}/organizations`);
+  const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.username || u.id;
+  return { sub: u.id, name, email: u.email, organizations: orgs.map((o) => o.alias).filter((a): a is string => !!a) };
+}
