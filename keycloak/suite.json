@@ -46,6 +46,14 @@
       "email": false
     },
     {
+      "clientId": "sprintdeck",
+      "name": "Sprintdeck",
+      "roles": [
+        "member"
+      ],
+      "email": false
+    },
+    {
       "clientId": "di-channels",
       "name": "DI Channels",
       "roles": [

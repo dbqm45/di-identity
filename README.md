@@ -19,6 +19,13 @@ produktów jako role klientów i agenci jako osobne podmioty z właścicielem (D
 | Usługa | `src/` z szablonu | `GET /health`, `GET /api/me`; tu dojdzie API Admin Console (krok 14b) |
 | Wdrożenie | `compose.yaml`, `Caddyfile`, `deploy/` | Keycloak, usługa, jeden Postgres z dwiema bazami, Caddy z TLS; konsola i API administracyjne Keycloak niedostępne z zewnątrz |
 
+Aplikacje (klienci) w `keycloak/suite.json`: `di-decision`, `di-definition`, `di-release`, `di-release-control`,
+`sprintdeck`, `di-channels`, `di-admin`, `di-identity`. **`sprintdeck`** (od 2026-11-26, pokój planowania z agendy
+„Discuss with team”, plan: dbqm45/pdi `docs/plan-pokoj-sprintdeck.md`): rola `member`, bez e-maila. Sprintdeck sam
+prowadzi logowanie (kod z PKCE, zakres `openid`) i przekazuje ID token do Supabase Auth (`grant_type=id_token`), bo
+logowanie przekierowaniem w Supabase Auth zawsze prosi o zakres `email`, którego realm tej aplikacji nie da (DI3).
+Adres przekierowania: `REDIRECT_SPRINTDECK=<adres sprintdecka>/auth/suite/callback`.
+
 ## Co niesie token (sprawdzone na Keycloak 26.4.7, 2026-11-23)
 
 | Roszczenie | Osoba | Agent |
