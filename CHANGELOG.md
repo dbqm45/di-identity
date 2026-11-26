@@ -2,6 +2,12 @@
 
 Notable changes, newest first. Entries are written by `npm run release` from Conventional Commits (RELEASING.md).
 
+## [0.1.10] - 2026-11-26
+
+### Added
+
+- **api:** look up a person's e-mail by sub for e-mail clients (#13)
+
 ## [0.1.9] - 2026-11-25
 
 ### Added
