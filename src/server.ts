@@ -11,7 +11,7 @@ import { lookupByEmail, lookupBySub } from './keycloak/people.ts';
 import { peopleRoutes } from './people-api.ts';
 import { adminRoutes } from './admin/routes.ts';
 import { keycloakDirectory } from './admin/directory.ts';
-import { discoverIssuer } from './admin/discovery.ts';
+import { discoverIssuer, fetchSamlMetadata } from './admin/discovery.ts';
 import { postgresAdminStore } from './admin/store.ts';
 import { loadSuite } from './keycloak/configure.ts';
 
@@ -76,7 +76,13 @@ if (keycloakUrl && clientSecret && adminSecret) {
     publicUrl,
     verifier: createVerifier({ issuer: config.oidcIssuer, audience: 'di-admin', fetchJwks: discoveryJwks(config.oidcIssuer) }),
     store: postgresAdminStore(pool),
-    directory: keycloakDirectory(service, suite.realm, products, (issuer) => discoverIssuer(issuer, { allowLocal: allowLocalProviders })),
+    directory: keycloakDirectory(
+      service,
+      suite.realm,
+      products,
+      (issuer) => discoverIssuer(issuer, { allowLocal: allowLocalProviders }),
+      (url) => fetchSamlMetadata(url, { allowLocal: allowLocalProviders }),
+    ),
     products,
     allowLocalProviders,
   });

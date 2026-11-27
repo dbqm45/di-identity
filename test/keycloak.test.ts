@@ -9,7 +9,7 @@ import { loadVocabulary } from '../src/events/envelope.ts';
 import { peopleRoutes } from '../src/people-api.ts';
 import { createAgent, createOrganization, disableOrganizationAgents, listAgents, organizationByAlias, setAgentEnabled } from '../src/keycloak/agents.ts';
 import { configure, loadSuite, CREATE_ONLY_FLOW } from '../src/keycloak/configure.ts';
-import { getOrgProvider, removeOrgProvider, setOrgProvider } from '../src/keycloak/org-provider.ts';
+import { getOrgProvider, removeOrgProvider, SAML_PROFILE, setOrgProvider, setOrgSamlProvider } from '../src/keycloak/org-provider.ts';
 import { addMember, grantRole, lookupByEmail, lookupBySub, revokeRole } from '../src/keycloak/people.ts';
 import { clientSecrets, secretVariable } from '../src/keycloak/secrets.ts';
 
@@ -229,7 +229,7 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
 
     await assert.rejects(setOrgProvider(service, { ...input }), /secret/, 'the first setup needs the secret');
     await setOrgProvider(service, { ...input, clientSecret: 'test-only-secret' });
-    assert.deepEqual(await getOrgProvider(service, suite.realm, run), { alias: `org-${run}`, issuer: custIssuer, clientId: 'suite-broker', domain: `${run}.test` });
+    assert.deepEqual(await getOrgProvider(service, suite.realm, run), { alias: `org-${run}`, kind: 'oidc', issuer: custIssuer, clientId: 'suite-broker', metadataUrl: '', domain: `${run}.test` });
 
     const idp = await admin.call<Record<string, unknown> & { config: Record<string, string> }>('GET', `${R}/identity-provider/instances/org-${run}`);
     assert.equal(idp.trustEmail, false);
@@ -256,6 +256,44 @@ test('the suite realm on a real Keycloak: people, organizations, product roles a
     // An update without the secret keeps it; another client id is taken.
     await setOrgProvider(service, { ...input, clientId: 'suite-broker-2' });
     assert.equal((await getOrgProvider(service, suite.realm, run))?.clientId, 'suite-broker-2');
+
+    // The same organization switches to SAML (docs/plan-saml.md): metadata fetched by the console, parsed by Keycloak.
+    const samlMetadata = `${url}/realms/${cust}/protocol/saml/descriptor`;
+    const fetchMetadata = async (u: string) => (await fetch(u)).text();
+    await setOrgSamlProvider(service, { realm: suite.realm, organization: run, metadataUrl: samlMetadata, domain: `${run}.test`, fetchMetadata });
+    const saml = await getOrgProvider(service, suite.realm, run);
+    assert.deepEqual(saml, { alias: `org-${run}`, kind: 'saml', issuer: `${url}/realms/${cust}`, clientId: '', metadataUrl: samlMetadata, domain: `${run}.test` });
+    const sp = await admin.call<Record<string, unknown> & { providerId: string; config: Record<string, string> }>('GET', `${R}/identity-provider/instances/org-${run}`);
+    assert.equal(sp.providerId, 'saml');
+    assert.equal(sp.trustEmail, false);
+    assert.equal(sp.hideOnLogin, true);
+    assert.equal(sp.firstBrokerLoginFlowAlias, CREATE_ONLY_FLOW);
+    assert.equal(sp.config.validateSignature, 'true');
+    assert.equal(sp.config.wantAssertionsSigned, 'true');
+    assert.equal(sp.config.principalType, 'SUBJECT');
+    assert.equal(sp.config.nameIDPolicyFormat, 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent');
+    assert.equal(sp.config.postBindingResponse, 'true');
+    assert.ok((sp.config.signingCertificate ?? '').length > 100, 'the signing certificate from the metadata');
+    assert.equal(sp.config.singleSignOnServiceUrl, `${url}/realms/${cust}/protocol/saml`);
+    assert.equal(sp.config['kc.org.domain'], `${run}.test`);
+    assert.equal(sp.config.syncMode, 'FORCE');
+    const samlMappers = await admin.call<{ identityProviderMapper: string; config: Record<string, string> }[]>('GET', `${R}/identity-provider/instances/org-${run}/mappers`);
+    assert.deepEqual(
+      samlMappers.filter((m) => m.identityProviderMapper === 'saml-username-idp-mapper').map((m) => m.config.template),
+      ['${ALIAS}.${NAMEID}'],
+      'the username from the NameID, never the e-mail (DI3)',
+    );
+    const profile = samlMappers.filter((m) => m.identityProviderMapper === 'saml-user-attribute-idp-mapper');
+    assert.deepEqual(profile.map((m) => [m.config['attribute.name'], m.config['user.attribute'], m.config.syncMode]).sort(), SAML_PROFILE.map(([a, p]) => [a, p, 'IMPORT']).sort());
+    assert.equal(samlMappers.length, 1 + SAML_PROFILE.length, 'nothing else from the assertion');
+    await assert.rejects(
+      setOrgSamlProvider(service, { realm: suite.realm, organization: run, metadataUrl: samlMetadata, domain: `${run}.test`, fetchMetadata: async () => '<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="x"/>' }),
+      /SAML metadata/,
+      'metadata without an IdP descriptor is refused',
+    );
+    // And back to OIDC: the SAML provider is replaced, not mixed.
+    await setOrgProvider(service, { ...input, clientSecret: 'test-only-secret' });
+    assert.equal((await getOrgProvider(service, suite.realm, run))?.kind, 'oidc');
     await assert.rejects(setOrgProvider(service, { ...input, domain: 'not-theirs.test' }), /domain/);
 
     assert.equal(await removeOrgProvider(service, suite.realm, run), true);

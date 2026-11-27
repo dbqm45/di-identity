@@ -97,23 +97,35 @@ export function invitationsBody(org: string, invitations: Invitation[], products
 /** The organization's own OIDC provider (AC1b.2): its settings without the secret, the form, removing it. */
 export function signInBody(org: string, provider: OrgProvider | null, domains: string[], csrf: string, redirect: string): string {
   const base = `/admin/o/${escape(org)}/sign-in`;
+  const where =
+    provider?.kind === 'saml'
+      ? `sign in through SAML at <code>${escape(provider.issuer)}</code> (metadata <code>${escape(provider.metadataUrl)}</code>)`
+      : `sign in at <code>${escape(provider?.issuer ?? '')}</code> (client <code>${escape(provider?.clientId ?? '')}</code>)`;
   const now = provider
-    ? `<p>People with an address at <strong>${escape(provider.domain)}</strong> sign in at <code>${escape(provider.issuer)}</code> (client <code>${escape(provider.clientId)}</code>).</p>
+    ? `<p>People with an address at <strong>${escape(provider.domain)}</strong> ${where}.</p>
 <form method="post" action="${base}/remove">${csrfField(csrf)}<button type="submit">Remove this sign-in</button>
 <span class="muted">People it created stay in the organization but cannot sign in until another one is set.</span></form>`
     : '<p class="muted">No sign-in of your own yet: people sign in with Google.</p>';
   const field = (name: string, label: string, value = '', type = 'text', extra = '') =>
     `<p><label>${label}<br><input type="${type}" name="${name}" value="${escape(value)}" size="60" ${extra}></label></p>`;
   const choices = domains.map((d) => `<option${provider?.domain === d ? ' selected' : ''}>${escape(d)}</option>`).join('');
+  const domain = `<p><label>Your domain<br><select name="domain" required>${choices}</select></label></p>`;
+  const oidc = provider?.kind === 'oidc' ? provider : null;
   return `<h1>Sign-in</h1>${now}
-<h2>${provider ? 'Change it' : 'Use your own OpenID Connect provider'}</h2>
+<p class="muted">One sign-in per organization, OpenID Connect or SAML 2.0; saving the other kind replaces it. The suite never trusts the provider's e-mail and never joins its accounts to existing ones: each person gets a new account, made a member of ${escape(org)}; roles still come from this console.</p>
+<h2>OpenID Connect provider</h2>
 <p>At your provider, register a confidential client with the redirect address <code>${escape(redirect)}</code>.</p>
-<p class="muted">The suite never trusts the provider's e-mail and never joins its accounts to existing ones: each person gets a new account, made a member of ${escape(org)}; roles still come from this console.</p>
 <form method="post" action="${base}">${csrfField(csrf)}
-${field('issuer', 'Issuer (https)', provider?.issuer ?? '', 'url', 'required')}
-${field('clientId', 'Client id', provider?.clientId ?? '', 'text', 'required')}
-${field('clientSecret', provider ? 'Client secret (leave empty to keep the stored one)' : 'Client secret', '', 'password', 'autocomplete="off"')}
-<p><label>Your domain<br><select name="domain" required>${choices}</select></label></p>
+${field('issuer', 'Issuer (https)', oidc?.issuer ?? '', 'url', 'required')}
+${field('clientId', 'Client id', oidc?.clientId ?? '', 'text', 'required')}
+${field('clientSecret', oidc ? 'Client secret (leave empty to keep the stored one)' : 'Client secret', '', 'password', 'autocomplete="off"')}
+${domain}
+<button type="submit">Save</button></form>
+<h2>SAML 2.0 provider</h2>
+<p>At your provider, add the suite as a service provider from its metadata <code>${escape(redirect)}/descriptor</code> (assertion consumer address <code>${escape(redirect)}</code>, HTTP-POST). Send a persistent NameID and sign the assertions.</p>
+<form method="post" action="${base}">${csrfField(csrf)}<input type="hidden" name="kind" value="saml">
+${field('metadataUrl', 'Your provider\'s metadata address (https)', provider?.kind === 'saml' ? provider.metadataUrl : '', 'url', 'required')}
+${domain}
 <button type="submit">Save</button></form>`;
 }
 

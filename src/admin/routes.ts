@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { TokenError, type Verifier } from '../auth/oidc.ts';
 import { DirectoryError, type Directory, type Person } from './directory.ts';
 import { page, peopleBody, invitationsBody, joinedPage, signInBody, agentsBody, logBody, refusal } from './pages.ts';
-import { checkIssuer } from './discovery.ts';
+import { checkIssuer, checkMetadataUrl } from './discovery.ts';
 import type { AdminSession, AdminStore, Invitation } from './store.ts';
 
 /**
@@ -363,6 +363,23 @@ export function adminRoutes(app: FastifyInstance, input: AdminInput): void {
     if (!session) return reply;
     const body = request.body as Record<string, unknown>;
     const text = (k: string, max: number) => String(body[k] ?? '').trim().slice(0, max);
+    if (body.kind === 'saml') {
+      let metadataUrl;
+      try {
+        metadataUrl = checkMetadataUrl(text('metadataUrl', 1000), input.allowLocalProviders ?? false);
+      } catch (err) {
+        return html(reply, 400, refusal((err as Error).message));
+      }
+      const domain = text('domain', 253);
+      try {
+        await input.directory.setSamlProvider(org, { metadataUrl, domain });
+      } catch (err) {
+        if (!(err instanceof DirectoryError)) throw err;
+        return html(reply, 409, refusal(err.message));
+      }
+      await record(session, org, 'provider_set', `SAML ${metadataUrl} (${domain})`);
+      return back(reply, org, 'sign-in');
+    }
     let issuer;
     try {
       issuer = checkIssuer(text('issuer', 500), input.allowLocalProviders ?? false);

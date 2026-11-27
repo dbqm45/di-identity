@@ -65,7 +65,7 @@ function fakeDirectory() {
   ]);
   const all = () => [...people.values()].flat();
   const domains = new Map([['acme', ['acme.test']], ['globex', ['globex.test']]]);
-  const providers = new Map<string, { alias: string; issuer: string; clientId: string; domain: string; secret: string }>();
+  const providers = new Map<string, { alias: string; kind: 'oidc' | 'saml'; issuer: string; clientId: string; metadataUrl: string; domain: string; secret: string }>();
   const directory: Directory = {
     async people(org) { return structuredClone(people.get(org) ?? []); },
     async add(org, email) {
@@ -90,15 +90,22 @@ function fakeDirectory() {
     async domains(org) { return domains.get(org) ?? []; },
     async provider(org) {
       const p = providers.get(org);
-      return p ? { alias: p.alias, issuer: p.issuer, clientId: p.clientId, domain: p.domain } : null;
+      return p ? { alias: p.alias, kind: p.kind, issuer: p.issuer, clientId: p.clientId, metadataUrl: p.metadataUrl, domain: p.domain } : null;
     },
     async setProvider(org, input) {
       if (!domains.get(org)?.includes(input.domain)) throw new DirectoryError(`the domain ${input.domain} is not one of the organization's domains`);
       const had = providers.get(org);
-      if (!had && !input.clientSecret) throw new DirectoryError('the client secret is needed to set up the provider');
-      const p = { alias: `org-${org}`, issuer: input.issuer, clientId: input.clientId, domain: input.domain, secret: input.clientSecret ?? had!.secret };
+      if ((!had || had.kind !== 'oidc') && !input.clientSecret) throw new DirectoryError('the client secret is needed to set up the provider');
+      const p = { alias: `org-${org}`, kind: 'oidc' as const, issuer: input.issuer, clientId: input.clientId, metadataUrl: '', domain: input.domain, secret: input.clientSecret ?? had!.secret };
       providers.set(org, p);
-      return { alias: p.alias, issuer: p.issuer, clientId: p.clientId, domain: p.domain };
+      return { alias: p.alias, kind: p.kind, issuer: p.issuer, clientId: p.clientId, metadataUrl: '', domain: p.domain };
+    },
+    async setSamlProvider(org, input) {
+      if (!domains.get(org)?.includes(input.domain)) throw new DirectoryError(`the domain ${input.domain} is not one of the organization's domains`);
+      if (input.metadataUrl.includes('no-cert')) throw new DirectoryError("the provider's SAML metadata has no signing certificate");
+      const p = { alias: `org-${org}`, kind: 'saml' as const, issuer: 'https://idp.acme.example/saml', clientId: '', metadataUrl: input.metadataUrl, domain: input.domain, secret: '' };
+      providers.set(org, p);
+      return { alias: p.alias, kind: p.kind, issuer: p.issuer, clientId: '', metadataUrl: p.metadataUrl, domain: p.domain };
     },
     async removeProvider(org) { return providers.delete(org); },
     async setAgent(clientId, enabled) { for (const list of agents.values()) for (const a of list) if (a.clientId === clientId) a.enabled = enabled; },
@@ -415,6 +422,43 @@ test('AC-16: the provider form refuses a plain-http issuer, a domain that is not
   assert.equal(wrong.statusCode, 409);
   assert.match(wrong.body, /not one of the organization/);
   assert.equal((await post(app, '/admin/o/acme/sign-in', session!, { ...form, clientSecret: '' })).statusCode, 409);
+  assert.equal(providers.size, 0);
+});
+
+// --- the organization's own SAML provider (docs/plan-saml.md) ---
+
+test("AC-18: an admin sets a SAML provider from its metadata address; the page gives what to register at the provider", async () => {
+  const { app, issuer, store, providers } = setup();
+  const { session } = await signIn(app, issuer);
+  const empty = await app.inject({ url: '/admin/o/acme/sign-in', headers: { cookie: session } });
+  assert.match(empty.body, /SAML 2\.0 provider/);
+  assert.ok(empty.body.includes(`${ISSUER}/broker/org-acme/endpoint/descriptor`), "the suite's service provider metadata");
+  assert.ok(empty.body.includes(`${ISSUER}/broker/org-acme/endpoint`), 'the address the provider answers to');
+  const csrf = csrfOf(empty.body);
+  const form = { csrf, kind: 'saml', metadataUrl: 'https://idp.acme.example/saml/metadata', domain: 'acme.test' };
+  const set = await post(app, '/admin/o/acme/sign-in', session!, form);
+  assert.equal(set.statusCode, 303, set.body);
+  assert.equal(providers.get('acme')?.kind, 'saml');
+  const shown = await app.inject({ url: '/admin/o/acme/sign-in', headers: { cookie: session } });
+  assert.match(shown.body, /sign in through SAML at <code>https:\/\/idp\.acme\.example\/saml<\/code>/);
+  assert.ok(store.events.some((e) => e.kind === 'provider_set' && e.subject === 'SAML https://idp.acme.example/saml/metadata (acme.test)'));
+  // Back to OIDC replaces it (a secret is needed again).
+  const oidc = { csrf, issuer: 'https://login.acme.example', clientId: 'suite', clientSecret: 's', domain: 'acme.test' };
+  assert.equal((await post(app, '/admin/o/acme/sign-in', session!, oidc)).statusCode, 303);
+  assert.equal(providers.get('acme')?.kind, 'oidc');
+});
+
+test('AC-19: the SAML form refuses a plain-http or user-in-address metadata URL, another domain and metadata without a certificate', async () => {
+  const { app, issuer, providers } = setup();
+  const { session } = await signIn(app, issuer);
+  const csrf = csrfOf((await app.inject({ url: '/admin/o/acme/sign-in', headers: { cookie: session } })).body);
+  const form = { csrf, kind: 'saml', metadataUrl: 'https://idp.acme.example/saml/metadata', domain: 'acme.test' };
+  assert.equal((await post(app, '/admin/o/acme/sign-in', session!, { ...form, metadataUrl: 'http://idp.acme.example/md' })).statusCode, 400);
+  assert.equal((await post(app, '/admin/o/acme/sign-in', session!, { ...form, metadataUrl: 'https://u:p@idp.acme.example/md' })).statusCode, 400);
+  assert.equal((await post(app, '/admin/o/acme/sign-in', session!, { ...form, domain: 'globex.test' })).statusCode, 409);
+  const nocert = await post(app, '/admin/o/acme/sign-in', session!, { ...form, metadataUrl: 'https://idp.acme.example/no-cert' });
+  assert.equal(nocert.statusCode, 409);
+  assert.match(nocert.body, /signing certificate/);
   assert.equal(providers.size, 0);
 });
 

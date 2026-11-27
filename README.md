@@ -112,7 +112,19 @@ dostawca. Sekret zostaje tylko w Keycloaku: konsola go nie zapisuje, nie pokazuj
 sekret przy zmianie zostawia zapisany. Adres wystawcy musi być https i wskazywać tylko adresy publiczne. Konsola na
 localhost dopuszcza dostawcę na localhost po http, np. drugi realm. Metadane pobiera bez przekierowań, z limitem czasu
 i rozmiaru (`src/admin/discovery.ts`). Konto usługowe potrzebuje do tego jeszcze `view-identity-providers` i
-`manage-identity-providers`, bo samo `manage-realm` dostaje 403. Na razie tylko OIDC, SAML osobno.
+`manage-identity-providers`, bo samo `manage-realm` dostaje 403.
+
+**SAML 2.0** ([plan](docs/plan-saml.md)): zamiast OIDC admin może podać adres metadanych SAML swojego dostawcy. Na
+organizację przypada jeden dostawca, a zapisanie drugiego rodzaju zastępuje poprzedniego. Konsola pobiera metadane z
+tymi samymi zabezpieczeniami, a Keycloak tylko je rozbiera (`import-config` z plikiem). Metadane bez certyfikatu
+podpisu albo adresu logowania są odrzucane. Zasady są te same co przy OIDC. Do tego:
+- wymagane podpisane asercje;
+- trwały NameID jako identyfikator, nazwa użytkownika `org-<alias>.<NameID>`;
+- odpowiedź przez HTTP-POST.
+
+E-mail, imię i nazwisko konsola bierze z atrybutów X.500 (`urn:oid:…`) albo z roszczeń Microsoftu (Entra ID, AD FS),
+tylko przy pierwszym logowaniu. Bez nich osoba raz uzupełnia formularz. U dostawcy rejestruje się suitę z metadanych
+`<issuer>/broker/org-<alias>/endpoint/descriptor`; strona Sign-in pokazuje ten adres.
 
 ## Polecenia
 
