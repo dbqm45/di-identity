@@ -1,7 +1,7 @@
 import { AdminError, type Admin } from '../keycloak/admin.ts';
 import { listAgents, organizationByAlias, setAgentEnabled } from '../keycloak/agents.ts';
 import { addMember, findPerson, grantRole, revokeRole } from '../keycloak/people.ts';
-import { getOrgProvider, removeOrgProvider, setOrgProvider, type OrgProvider } from '../keycloak/org-provider.ts';
+import { getOrgProvider, removeOrgProvider, setOrgProvider, setOrgSamlProvider, type OrgProvider } from '../keycloak/org-provider.ts';
 
 export type { OrgProvider };
 
@@ -47,6 +47,8 @@ export interface Directory {
   provider(organization: string): Promise<OrgProvider | null>;
   /** Creates or updates it; a missing `clientSecret` keeps the stored one. DirectoryError with a reason otherwise. */
   setProvider(organization: string, input: { issuer: string; clientId: string; clientSecret?: string; domain: string }): Promise<OrgProvider>;
+  /** The organization's own SAML 2.0 provider from its metadata address (docs/plan-saml.md); replaces an OIDC one. */
+  setSamlProvider(organization: string, input: { metadataUrl: string; domain: string }): Promise<OrgProvider>;
   removeProvider(organization: string): Promise<boolean>;
 }
 
@@ -63,9 +65,14 @@ const nameOf = (m: Member) => [m.firstName, m.lastName].filter(Boolean).join(' '
 /** The issuer's OpenID metadata, fetched with the console's address checks (src/admin/discovery.ts). */
 export type Discover = (issuer: string) => Promise<Record<string, unknown>>;
 
-export function keycloakDirectory(admin: Admin, realm: string, products: Record<string, string[]>, discover: Discover = async () => {
+/** The SAML metadata (XML) of an address, fetched with the same checks. */
+export type FetchSaml = (url: string) => Promise<string>;
+
+const unavailable = async (): Promise<never> => {
   throw new DirectoryError('setting up a provider is not available here');
-}): Directory {
+};
+
+export function keycloakDirectory(admin: Admin, realm: string, products: Record<string, string[]>, discover: Discover = unavailable, fetchSaml: FetchSaml = unavailable): Directory {
   const R = `/${realm}`;
   const rolesOf = async (id: string): Promise<string[]> => {
     const mappings = await admin.call<{ clientMappings?: Record<string, { client?: string; mappings?: { name: string }[] }> }>('GET', `${R}/users/${id}/role-mappings`);
@@ -129,6 +136,14 @@ export function keycloakDirectory(admin: Admin, realm: string, products: Record<
         return await setOrgProvider(admin, { realm, organization, ...input, discover });
       } catch (err) {
         // Our own reasons (the domain, the secret, the metadata, the address) are for the admin; Keycloak's are not.
+        if (err instanceof AdminError || !(err instanceof Error)) throw err;
+        throw new DirectoryError(err.message);
+      }
+    },
+    async setSamlProvider(organization, input) {
+      try {
+        return await setOrgSamlProvider(admin, { realm, organization, ...input, fetchMetadata: fetchSaml });
+      } catch (err) {
         if (err instanceof AdminError || !(err instanceof Error)) throw err;
         throw new DirectoryError(err.message);
       }

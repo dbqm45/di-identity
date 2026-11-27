@@ -16,6 +16,8 @@ export interface Admin {
   call<T = unknown>(method: string, path: string, body?: unknown): Promise<T>;
   /** The `id` from the Location header of a create call. */
   create(path: string, body: unknown): Promise<string>;
+  /** Posts a multipart form (e.g. `identity-provider/import-config` with a metadata file); returns the parsed JSON. */
+  form<T = unknown>(path: string, form: FormData): Promise<T>;
   readonly url: string;
 }
 
@@ -54,12 +56,13 @@ function adminClient(rawUrl: string, fetchImpl: typeof fetch | undefined, realm:
   };
 
   const send = async (method: string, path: string, body?: unknown): Promise<Response> => {
+    const multipart = body instanceof FormData;
     const res = await f(`${url}/admin/realms${path}`, {
       method,
       redirect: 'error',
       signal: AbortSignal.timeout(15_000),
-      headers: { authorization: `Bearer ${await signIn()}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      headers: { authorization: `Bearer ${await signIn()}`, ...(body === undefined || multipart ? {} : { 'content-type': 'application/json' }) },
+      ...(body === undefined ? {} : { body: multipart ? body : JSON.stringify(body) }),
     });
     if (!res.ok) {
       const detail = (await res.text()).slice(0, 300);
@@ -74,6 +77,10 @@ function adminClient(rawUrl: string, fetchImpl: typeof fetch | undefined, realm:
       const res = await send(method, path, body);
       const text = await res.text();
       return (text ? JSON.parse(text) : null) as T;
+    },
+    async form<T>(path: string, form: FormData): Promise<T> {
+      const res = await send('POST', path, form);
+      return (await res.json()) as T;
     },
     async create(path: string, body: unknown): Promise<string> {
       const res = await send('POST', path, body);
