@@ -2,6 +2,12 @@
 
 Notable changes, newest first. Entries are written by `npm run release` from Conventional Commits (RELEASING.md).
 
+## [0.1.12] - 2026-11-27
+
+### Added
+
+- **admin:** let organizations sign in through their SAML provider (#15)
+
 ## [0.1.11] - 2026-11-27
 
 ### Added
