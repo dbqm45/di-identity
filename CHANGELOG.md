@@ -2,6 +2,12 @@
 
 Notable changes, newest first. Entries are written by `npm run release` from Conventional Commits (RELEASING.md).
 
+## [0.1.11] - 2026-11-27
+
+### Added
+
+- **realm:** add the sprintdeck client (#14)
+
 ## [0.1.10] - 2026-11-26
 
 ### Added
